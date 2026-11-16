@@ -134,10 +134,11 @@ For an explicitly supplied task ID, `find.taskId` requires a unique case-sensiti
 match inside complete, filtered results; `showExact` remains title-only. Both paths issue an edit
 alias only after a canonical revision-checked read. Each editable alias captures its exact
 task/comment owner and saved or pending-plan basis; superseding that basis invalidates the alias.
-The optional `find.sourceLine` narrows the same local lookup using the exact requested path and a
-zero-based line copied from a returned task's `source.line`. It is removed before the public task
-search call. Only one matching row from a complete, cursor-free, nontruncated result can proceed to
-the existing revision-checked inspection; a missing or conflicting coordinate cannot fall back to a
+The private model projection shows canonical task source lines as one-based coordinates, including
+task trees, while leaving public `source.line` zero-based. The optional `find.sourceLine` narrows the
+same local lookup using the exact requested path and that displayed line number. It is removed
+before the public task search call. Only one matching row from a complete, cursor-free, nontruncated
+result can proceed to the existing revision-checked inspection; a missing or conflicting coordinate cannot fall back to a
 unique or title/ID match. Unqualified ambiguous lookups still require a supported narrowing before
 their requested mutation is considered resolved.
 

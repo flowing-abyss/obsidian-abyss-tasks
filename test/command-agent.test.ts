@@ -3717,7 +3717,7 @@ it('inspects a source-coordinate match for a retained partial title query', asyn
   );
   await h.session.submit('Change the quarterly task.');
   h.script(
-    () => call('find', { ...query, path, sourceLine: 0, purpose: 'change' }),
+    () => call('find', { ...query, path, sourceLine: 1, purpose: 'change' }),
     () => {
       coordinate = latestToolValue(h, 'find');
       readsAfterCoordinate = treeReads.length;
@@ -3750,7 +3750,7 @@ it.each([
     title: 'Same',
     query: 'Same',
     source: '- [ ] Same #work\n- [ ] Control\n- [ ] Same #work\n',
-    sourceLine: 2,
+    sourceLine: 3,
     clarification: 'The second one in Root candidates.md, on line 3.',
   },
   {
@@ -3759,7 +3759,7 @@ it.each([
     title: 'Echo',
     query: 'Echo',
     source: '- [ ] Container\n  - [ ] Echo #work\n  - [ ] Marker\n  - [ ] Echo #work\n',
-    sourceLine: 3,
+    sourceLine: 4,
     clarification: 'The second Echo under Container in Nested/Candidates.md, on line 4.',
   },
 ])(
@@ -3776,7 +3776,10 @@ it.each([
           ...api.tasks,
           search: async (input) => {
             searchInputs.push({ ...input });
-            return search(input);
+            const result = await search(input);
+            return result.ok
+              ? { ...result, value: { ...result.value, items: [...result.value.items].reverse() } }
+              : result;
           },
         },
       };
@@ -3818,7 +3821,9 @@ it.each([
     const canonical = await h.api.tasks.list({ path });
     if (!canonical.ok) throw Error('Missing canonical task source');
     const selectedCanonical = expectDefined(
-      canonical.value.items.find((row) => row.source.line === sourceLine && row.title === title),
+      canonical.value.items.find(
+        (row) => row.source.line === sourceLine - 1 && row.title === title,
+      ),
     );
     const otherDuplicate = expectDefined(
       canonical.value.items.find(
@@ -3904,7 +3909,7 @@ it('requires the returned row path to equal the source coordinate path', async (
       call('find', {
         query: 'Unique',
         path: 'Requested path.md',
-        sourceLine: 0,
+        sourceLine: 1,
         purpose: 'change',
       }),
     () => {
@@ -3914,13 +3919,49 @@ it('requires the returned row path to equal the source coordinate path', async (
   );
   await h.session.submit('Change the task in Requested path.md at line 1.');
 
-  expect(result['items']).toMatchObject([{ source: { path: actualPath, line: 0 } }]);
+  expect(result['items']).toMatchObject([{ source: { path: actualPath, line: 1 } }]);
   expect(result['match']).toBeUndefined();
   expect(result['selection']).toBeUndefined();
   expect(h.session.snapshot().status.kind).toBe('question');
   expect(h.session.snapshot().proposal.changes).toEqual([]);
   expect(h.session.snapshot().journal).toEqual([]);
   expect(await h.read(actualPath)).toBe(source);
+});
+it('does not preview a coordinate match that becomes stale before inspection', async () => {
+  const path = 'Exact path.md';
+  const source = '- [ ] Unique\n';
+  let external: (path: string, content: string) => Promise<void> = async () => {};
+  const h = await setup({ [path]: source }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: async (input) => {
+          const result = await search(input);
+          if (input.path === path) await external(path, '- [ ] Updated\n');
+          return result;
+        },
+      },
+    };
+  });
+  external = (externalPath, content) => h.external(externalPath, content);
+  let result: Record<string, unknown> = {};
+  h.script(
+    () => call('find', { query: 'Unique', path, sourceLine: 1, purpose: 'change' }),
+    () => {
+      result = latestToolValue(h, 'find');
+      return finish('The task changed after search; which current task should I inspect?', true)();
+    },
+  );
+  await h.session.submit('Change the task in Exact path.md at line 1.');
+
+  expect(result['match']).toBeUndefined();
+  expect(result['selection']).toBeUndefined();
+  expect(h.session.snapshot().status.kind).not.toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read(path)).toBe('- [ ] Updated\n');
 });
 it('recovers with sourceLine after rejecting retryOf for a nonempty result', async () => {
   const path = 'Exact path.md';
@@ -3945,7 +3986,7 @@ it('recovers with sourceLine after rejecting retryOf for a nonempty result', asy
       return call('find', {
         query: 'Same',
         path,
-        sourceLine: 1,
+        sourceLine: 2,
         purpose: 'change',
       });
     },
@@ -3975,11 +4016,12 @@ it('recovers with sourceLine after rejecting retryOf for a nonempty result', asy
   expect(await h.read(path)).toBe(source);
 });
 it.each([
-  ['missing path', { sourceLine: 0 }],
+  ['missing path', { sourceLine: 1 }],
+  ['zero line', { path: 'Exact path.md', sourceLine: 0 }],
   ['negative line', { path: 'Exact path.md', sourceLine: -1 }],
   ['fractional line', { path: 'Exact path.md', sourceLine: 1.5 }],
-  ['conflicting task ID', { path: 'Exact path.md', sourceLine: 0, taskId: 'task-id' }],
-  ['conflicting exact-title selector', { path: 'Exact path.md', sourceLine: 0, showExact: true }],
+  ['conflicting task ID', { path: 'Exact path.md', sourceLine: 1, taskId: 'task-id' }],
+  ['conflicting exact-title selector', { path: 'Exact path.md', sourceLine: 1, showExact: true }],
 ])('rejects a source coordinate with %s before public search', async (_name, selector) => {
   const source = '- [ ] Unique\n';
   let searchCalls = 0;
@@ -4741,7 +4783,7 @@ it.each(['source-line coordinate', 'accepted tag filter'] as const)(
     const broad = { query: 'Proof', fields: 'all', path: 'a.md' };
     const selector =
       narrowing === 'source-line coordinate'
-        ? { sourceLine: canonicalNorth.source.line }
+        ? { sourceLine: canonicalNorth.source.line + 1 }
         : { tagsAll: ['#north'] };
     const capture = scriptAcceptedCommentNarrowing(h, broad, selector);
     await h.session.submit('Add the comment "Call Jo." to Proof tagged #north in a.md.');

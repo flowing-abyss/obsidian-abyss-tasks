@@ -182,12 +182,7 @@ export function canonicalToolName(name: string): string {
 const findSchema = readSchema.options[0]
   .omit({ kind: true })
   .extend({
-    sourceLine: z
-      .number()
-      .int()
-      .min(0)
-      .optional()
-      .describe('Exact zero-based source.line from a returned task row; requires its exact path.'),
+    sourceLine: z.number().int().min(1).optional().describe('One-based line; exact path required.'),
     purpose: z
       .enum(['change', 'remove', 'show-only', 'locate-child'])
       .optional()
@@ -265,7 +260,7 @@ function soleTask(
     return undefined;
   const matches = result.items.filter((row) => {
     if (selector.sourceLine !== undefined)
-      return row.source.path === selector.path && row.source.line === selector.sourceLine;
+      return row.source.path === selector.path && row.source.line + 1 === selector.sourceLine;
     if (selector.taskId !== undefined) return exactTaskMatch(row, selector.taskId, 'id');
     return (
       result.items.length === 1 ||

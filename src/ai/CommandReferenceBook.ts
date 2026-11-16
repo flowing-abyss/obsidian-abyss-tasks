@@ -32,6 +32,22 @@ function identifiesMetadata(operation: Record<string, unknown> | undefined): boo
       Object.keys(operation).every((key) => key === 'type' || key === 'patch'))
   );
 }
+function projectTaskSource(
+  input: Record<string, unknown>,
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const source = record(value);
+  const line = source?.['line'];
+  return source !== undefined &&
+    typeof input['target'] === 'string' &&
+    typeof input['revision'] === 'string' &&
+    typeof input['markdownTitle'] === 'string' &&
+    typeof source['path'] === 'string' &&
+    Number.isInteger(line) &&
+    (line as number) >= 0
+    ? { ...source, line: (line as number) + 1 }
+    : undefined;
+}
 /** Turn-local SDK projection only. Neither aliases nor this book enter application state. */
 export class CommandReferenceBook {
   private readonly aliases = new Map<string, { kind: CommandReferenceKind; value: string }>();
@@ -209,6 +225,10 @@ export class CommandReferenceBook {
     if (edit !== undefined && binding !== undefined) this.edits.set(edit, binding);
     const projected = Object.fromEntries(
       Object.entries(input).map(([key, item]) => {
+        if (key === 'source') {
+          const source = projectTaskSource(input, item);
+          if (source !== undefined) return [key, source];
+        }
         if (key === 'input' && (input['kind'] === 'task' || input['kind'] === 'note')) {
           const shape = commandReferenceInputs[input['kind']];
           if (shape !== undefined)

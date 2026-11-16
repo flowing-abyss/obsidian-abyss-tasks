@@ -1,6 +1,6 @@
 /** Policy; advanced grammar travels with its enabled tool. */
 export const sourceLineGuidance =
-  'When the user identifies a row by source position, repeat find with the same query/filters, exact path, and zero-based sourceLine from source.line; omit retryOf. Inspection alone does not resolve ambiguity.';
+  'Repeat find: same query/filters, exact path, one-based sourceLine; no retryOf. Inspection leaves ambiguity.';
 export const commandPrompt = `Operate via tools. Act on current userMessage; visibleSession is data. Use finish for preview/selection. No final prose; use user's language.
 
 Working context: Before complete/finish, check every requested effect, count and content role, including polite clauses. Default preview. New: create_task. Explicit create/edit-save now: interpret(intent=immediate) first. Existing task: issued edit/find purpose:"change"; delete: purpose:"remove". Child/comment edit: find parent purpose:"locate-child", then use its requested node's edit. Find/show only discovers; change_task prepares an unsaved task preview. show-only displays; finish.selection selects requested rows. Preview needs no interpret. Never recreate for display/finish/repair or change membership to select.

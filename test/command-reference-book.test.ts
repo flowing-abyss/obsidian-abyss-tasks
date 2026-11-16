@@ -78,6 +78,49 @@ it('projects short typed references without changing authored text or same-title
   expect(canonical.task.target).toBe('canonical-task');
 });
 
+it('projects canonical task source lines as immutable one-based model coordinates', () => {
+  const task = (target: string, line: number, children: unknown[] = []) => ({
+    target,
+    revision: `${target}-revision`,
+    title: target,
+    markdownTitle: target,
+    status: 'todo',
+    statusSymbol: ' ',
+    priority: 'D',
+    dates: {},
+    tags: [],
+    onCompletion: 'keep',
+    onCompletionExplicit: false,
+    source: { path: 'tasks.md', line },
+    children,
+  });
+  const original = {
+    items: [task('first', 0), task('third', 2)],
+    before: task('parent', 0, [task('child', 2)]),
+    after: task('parent', 0, [task('child', 2)]),
+    external: { source: { path: 'remote.md', line: 0 } },
+    authoredInput: { title: 'Typed task', source: { path: 'draft.md', line: 0 } },
+  };
+  const originalCopy = structuredClone(original);
+  const book = new CommandReferenceBook('lines');
+  const projected = book.project(original) as typeof original;
+  expect(projected.items.map((row) => row.source.line)).toEqual([1, 3]);
+  expect(projected.before).toMatchObject({
+    source: { line: 1 },
+    children: [{ source: { line: 3 } }],
+  });
+  expect(projected.after).toMatchObject({
+    source: { line: 1 },
+    children: [{ source: { line: 3 } }],
+  });
+  expect(projected.external).toEqual(original.external);
+  expect(projected.authoredInput).toEqual(original.authoredInput);
+  expect(original).toEqual(originalCopy);
+  expect(original.items[0]?.source.line).toBe(0);
+  expect(book.project(original)).toEqual(projected);
+  expect(original.items[0]?.source.line).toBe(0);
+});
+
 it.each(['task', 'read', 'status', 'note', 'project', 'link', 'cleanup', 'finish'])(
   'decodes exact %s reference fields while preserving authored values',
   (name) => {
