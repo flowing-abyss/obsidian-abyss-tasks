@@ -276,6 +276,35 @@ it('binds corrected descendants to their saved branch and original change only',
     ]);
   }).toThrow();
 });
+it('offers an issued display retry only for the single saved version being selected', () => {
+  const evidence = new CommandEvidence();
+  const row = { target: 'row', revision: 'saved' };
+  const query = { entity: 'task' as const, query: 'Review', scope: {}, count: 1, complete: true };
+  const original = evidence.discovery(query);
+  evidence.expectTaskChange(original, 'change', row, [row]);
+  const references = { issuedFindEvidence: () => ['@1:q7'], issuedTaskEdit: () => '@1:b1' };
+  const check = (displayed: (typeof row)[]) => () =>
+    evidence.checkTaskChanges(displayed, references);
+  expect(check([row])).toThrow(/purpose:"show-only".*retryOf:"@1:q7"/u);
+  for (const displayed of [
+    [],
+    [{ ...row, revision: 'stale' }],
+    [row, { ...row, target: 'other' }],
+  ]) {
+    expect(check(displayed)).toThrow(/change_task/u);
+    expect(check(displayed)).not.toThrow(/show-only/u);
+  }
+  evidence.discovery({ ...query });
+  expect(check([row])).not.toThrow(/show-only/u);
+  evidence.expectTaskChange(evidence.discovery({ ...query }), 'change', row, [row]);
+  expect(check([row])).toThrow(/show-only/u);
+  const other = { target: 'other', revision: 'saved' };
+  const otherLookup = evidence.discovery({ ...query, query: 'Other' });
+  evidence.expectTaskChange(otherLookup, 'change', other, [other]);
+  expect(check([row])).toThrow(/change_task/u);
+  expect(check([row])).not.toThrow(/show-only/u);
+});
+
 it('allows a parent lookup correction only for a prepared change on the observed descendant version', () => {
   const evidence = new CommandEvidence();
   const parent = { target: 'Relay', revision: 'parent-revision' };

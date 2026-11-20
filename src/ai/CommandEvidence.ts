@@ -381,6 +381,7 @@ export class CommandEvidence {
     displayed: readonly TaskVersion[] = [],
     references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence' | 'issuedTaskEdit'>>,
     current?: unknown,
+    allowDisplayRetry = true,
   ): void {
     const corrected = this.correctedRoots(displayed);
     this.checkUnresolvedLookups(corrected);
@@ -403,6 +404,9 @@ export class CommandEvidence {
         continue;
       throw this.pendingChangeFailure(
         versionKey({ target, revision: change.revision }),
+        allowDisplayRetry && this.taskChanges.size === 1 && displayed.length === 1
+          ? displayed[0]
+          : undefined,
         references,
         current,
       );
@@ -410,36 +414,30 @@ export class CommandEvidence {
   }
   private pendingChangeFailure(
     root: string,
+    selected: TaskVersion | undefined,
     references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence' | 'issuedTaskEdit'>>,
     current?: unknown,
   ): CommandFailure {
     const id = this.changeLookups.get(root);
     const lookup = id === undefined ? undefined : this.discoveries_abyssPrivate.get(id);
     const retryOf = id === undefined ? undefined : references?.issuedFindEvidence?.([id])[0];
-    const correction = this.parentCorrection(root, lookup, retryOf);
-    if (correction !== undefined) return new CommandFailure('PENDING_TASK_CHANGE', correction);
-    return new CommandFailure(
-      'PENDING_TASK_CHANGE',
-      this.pendingTaskChangeMessage(root, references, current),
-    );
-  }
-  private parentCorrection(
-    root: string,
-    lookup: CommandDiscovery | undefined,
-    retryOf: string | undefined,
-  ): string | undefined {
+    let message = this.pendingTaskChangeMessage(root, references, current);
     if (
-      retryOf === undefined ||
-      lookup?.complete !== true ||
-      lookup.count !== 1 ||
-      this.latest.get(this.queryKey_abyssPrivate(lookup)) !== lookup ||
-      !this.preparedDescendant(root)
-    )
-      return undefined;
-    const scope = { ...lookup.scope };
-    Reflect.deleteProperty(scope, 'limit');
-    const find = { query: lookup.query, ...scope, purpose: 'locate-child', retryOf };
-    return `If parent only locates prepared child: find(${JSON.stringify(find)}), then finish; do not repeat child edit. Edit parent only if requested.`;
+      retryOf !== undefined &&
+      lookup?.complete === true &&
+      lookup.count === 1 &&
+      this.latest.get(this.queryKey_abyssPrivate(lookup)) === lookup
+    ) {
+      if (this.preparedDescendant(root)) {
+        const scope = { ...lookup.scope };
+        Reflect.deleteProperty(scope, 'limit');
+        const find = { query: lookup.query, ...scope, purpose: 'locate-child', retryOf };
+        message = `If parent only locates prepared child: find(${JSON.stringify(find)}), then finish; do not repeat child edit. Edit parent only if requested.`;
+      } else if (selected !== undefined && versionKey(selected) === root) {
+        message = `If the user only wants to select or show this task, repeat the same find with identical query and filters, purpose:"show-only", retryOf:"${retryOf}", then finish with its selection. For a requested edit: ${message}`;
+      }
+    }
+    return new CommandFailure('PENDING_TASK_CHANGE', message);
   }
   private pendingTaskChangeMessage(
     root: string,

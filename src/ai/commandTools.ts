@@ -2386,13 +2386,15 @@ class CommandToolOwner {
     const savedTasks = selection.flatMap((entry) =>
       entry.kind === 'task' && 'revision' in entry ? [entry] : [],
     );
+    const requiresTaskContent =
+      ctx.researchAdmission === 'allowed-prepare' && evidence.requiresTaskContentPreparation();
     evidence.checkTaskChanges(
       displayOnly && savedTasks.length === selection.length ? savedTasks : undefined,
       ctx.references,
       commandReferences(ctx.session.snapshot()),
+      !requiresTaskContent,
     );
-    if (ctx.researchAdmission === 'allowed-prepare' && evidence.requiresTaskContentPreparation())
-      throw new CommandFailure('UNGROUNDED_FINISH', 'Prepare task content.');
+    if (requiresTaskContent) throw new CommandFailure('UNGROUNDED_FINISH', 'Prepare task content.');
     return undefined;
   }
   private checkFinishBasis_abyssPrivate(reviewed?: { id: string; revision: number }): void {

@@ -6709,6 +6709,33 @@ it('requires accepted research task preparation before finish and complete:true 
   );
   expect(JSON.stringify(h.model.doGenerateCalls)).toContain('Prepare task content.');
 });
+it('keeps an outstanding research edit actionable when finish selects the saved task', async () => {
+  const h = await setup({ 'a.md': '- [ ] Existing\n' }, {}, undefined, {
+    reviewWrite: 'native',
+    reviewResearch: async () => ({ authorized: true, requiresTaskPreparation: true }),
+  });
+  h.script(
+    interpret('plan', true),
+    () => call('research', { query: 'requested source' }),
+    () => call('find', { query: 'Existing', purpose: 'change' }),
+    () => call('finish', { state: 'ready', selection: [latestToolValue(h, 'find')['selection']] }),
+    () =>
+      call('change_task', {
+        edit: projectedEdit(h, 'Existing'),
+        operation: { type: 'description', text: 'Prepared from the source.' },
+      }),
+    finish(),
+  );
+  await h.session.submit('Research the source and add the requested description to Existing.');
+  const feedback = JSON.stringify(
+    h.model.doGenerateCalls[4]?.prompt.filter((m) => m.role === 'tool').at(-1),
+  );
+  expect(feedback).toContain('Pending: change_task');
+  expect(feedback).not.toContain('show-only');
+  expect(h.session.snapshot().trees[0]?.after?.description).toBe('Prepared from the source.');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+});
 it('accepts a current append change as research preparation when the task already has a preview', async () => {
   const h = await setup({ 'a.md': '- [ ] Existing\n' }, {}, undefined, {
     reviewWrite: 'native',
