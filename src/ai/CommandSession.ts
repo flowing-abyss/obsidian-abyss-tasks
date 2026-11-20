@@ -12,10 +12,12 @@ import {
   commandMessage,
   draftDispositionMessage,
   noteMoveConflictMessage,
+  pendingProjectConflictMessage,
+  projectMoveFocusMessage,
   savedContentStatusMessage,
   writeJournalFailureMessage,
 } from './commandMessages';
-import { projectMoveFocusMessage, projectMoveWithDescendantFocus } from './commandProjects';
+import { projectMoveWithDescendantFocus } from './commandProjects';
 import { canonicalCommandPlan, commandRead } from './commandReads';
 import {
   discardedCommandEvidence,
@@ -242,12 +244,7 @@ function composeProjectChange(previous: CommandChange, next: CommandChange): Com
     previous.before.revision !== next.before.revision ||
     previous.before.target !== next.before.target
   )
-    throw new CommandFailure(
-      'REVISION_CONFLICT',
-      commandMessage(
-        'The project changed while its earlier edits were pending. Review them before continuing.',
-      ),
-    );
+    throw new CommandFailure('REVISION_CONFLICT', commandMessage(pendingProjectConflictMessage));
   const fields = new Map((previous.fields ?? []).map((field) => [field.fieldId, field]));
   for (const field of next.fields ?? []) fields.set(field.fieldId, field);
   return {

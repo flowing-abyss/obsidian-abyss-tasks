@@ -139,7 +139,11 @@ task trees, while leaving public `source.line` zero-based. The optional `find.so
 same local lookup using the exact requested path and that displayed line number. It is removed
 before the public task search call. Only one matching row from a complete, cursor-free, nontruncated
 result can proceed to the existing revision-checked inspection; a missing or conflicting coordinate cannot fall back to a
-unique or title/ID match. Unqualified ambiguous lookups still require a supported narrowing before
+unique or title/ID match. An explicit change or removal lookup retains its coordinate in
+turn-local discovery evidence. While that coordinate is unresolved, the command owner defers
+task mutations before staging, including sibling calls with previously issued edit handles.
+On a complete standalone lookup with no match it can issue the existing evidence-backed question
+with the file and line. Incomplete pages do not establish absence. Unqualified ambiguous lookups still require a supported narrowing before
 their requested mutation is considered resolved.
 
 The core prompt defines existing-context selection before new capture. At the control boundary,

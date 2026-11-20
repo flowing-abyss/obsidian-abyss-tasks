@@ -1,3 +1,7 @@
+export const pendingProjectConflictMessage =
+  'The project changed while its earlier edits were pending. Review them before continuing.';
+export const projectMoveFocusMessage =
+  'Select the saved root task before moving it. The previous focus and proposal are retained.';
 /** Fixed CommandMode chrome only. main supplies the host language; Node consumers default to English. */
 export const writeJournalFailureMessage =
   'Could not save or record the result. Review the retained write journal before continuing.';
@@ -50,6 +54,8 @@ const russian = {
   'Saving…': 'Сохраняю…',
   'Working…': 'Думаю…',
   'Ready.': 'Готово.',
+  'Could not complete the request.': 'Не удалось выполнить запрос.',
+  'Retry the unfinished part of your request.': 'Повторите невыполненную часть запроса.',
   'There are no changes to save.': 'Нет изменений для сохранения.',
   'Waiting for your command.': 'Жду вашу команду.',
   'Ready for review.': 'Готово к проверке.',
@@ -102,7 +108,7 @@ const russian = {
     'Прочитайте весь план задачи перед подготовкой изменений.',
   'Refine the current note proposal to retain its pending sections.':
     'Уточните текущее предложение заметки, чтобы сохранить ожидающие изменения разделов.',
-  'The project changed while its earlier edits were pending. Review them before continuing.':
+  [pendingProjectConflictMessage]:
     'Проект изменился, пока предыдущие правки ожидали сохранения. Проверьте их перед продолжением.',
   [noteMoveConflictMessage]:
     'Сохраните или отмените изменения этих заметок перед переносом задач. Вся текущая работа сохранена.',
@@ -246,7 +252,7 @@ const russian = {
   '{part} · Complete selection': '{part} · Выбрано полностью',
   '{scope} · Complete preview': '{scope} · Полный предпросмотр',
   'Changed section · {label}': 'Изменённый раздел · {label}',
-  'Select the saved root task before moving it. The previous focus and proposal are retained.':
+  [projectMoveFocusMessage]:
     'Перед переносом выберите сохранённую корневую задачу. Предыдущий выбор и предложение сохранены.',
   [changedProposalMessage]:
     'Предложение изменилось во время записи. Проверьте текущую версию перед подтверждением.',

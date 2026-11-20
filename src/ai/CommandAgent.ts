@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { TasksApiV1 } from '../../api';
 import { repairEncodedContainers } from './commandArgumentRepair';
 import { CommandEvidence } from './CommandEvidence';
+import { commandMessage } from './commandMessages';
 import { commandEditTools } from './commandModelSchema';
 import { CommandPendingOperations } from './CommandPendingOperations';
 import { commandPrompt, sourceLineConstraint } from './commandPrompt';
@@ -32,6 +33,7 @@ import {
   reviewCommandWrite,
   type WriteReviewer,
 } from './commandWriteAuthorization';
+import { hasMaterialCommandWork } from './commandWriteSubjects';
 import type { ProviderConnections } from './providers/ProviderConnections';
 import { providerRetryable } from './providers/providerFailure';
 import {
@@ -158,43 +160,35 @@ function generationLifetime(
     },
   };
 }
-function rejectedKind(input: string): string | undefined {
+type ArgumentObject = Record<string, unknown> | undefined;
+function argumentObject(input: string): ArgumentObject {
   try {
-    let nested: unknown = record(JSON.parse(input))?.['input'];
-    if (typeof nested === 'string') nested = JSON.parse(nested) as unknown;
-    const value = record(nested);
-    return typeof value?.['kind'] === 'string' ? value['kind'] : undefined;
+    return record(JSON.parse(input));
   } catch {
     return undefined;
   }
 }
-function rejectedAddComment(input: string): boolean {
-  try {
-    const root = record(JSON.parse(input));
-    const payload = record(root?.['input']) ?? root;
-    return record(payload?.['operation'])?.['type'] === 'add-comment';
-  } catch {
-    return false;
-  }
+function rejectedKind(root: ArgumentObject): string | undefined {
+  const nested = root?.['input'];
+  const value = typeof nested === 'string' ? argumentObject(nested) : record(nested);
+  return typeof value?.['kind'] === 'string' ? value['kind'] : undefined;
 }
-function taskSchemaRepair(input: string): string {
-  const kind = rejectedKind(input);
-  const addComment = rejectedAddComment(input);
+function operationType(root: ArgumentObject): unknown {
+  return record((record(root?.['input']) ?? root)?.['operation'])?.['type'];
+}
+function taskSchemaRepair(root: ArgumentObject): string {
+  const kind = rejectedKind(root);
+  const addComment = operationType(root) === 'add-comment';
   let envelope = '';
-  try {
-    const root = record(JSON.parse(input));
-    if (
-      root !== undefined &&
-      Object.keys(root).length === 3 &&
-      typeof root['plan'] === 'string' &&
-      typeof root['expectedPlanRevision'] === 'string' &&
-      record(root['operation']) !== undefined
-    )
-      envelope =
-        ' Move unchanged operands into {input:{kind:append,plan,expectedPlanRevision,operation}} only if this is the intended pending-plan refinement.';
-  } catch {
-    /* Invalid JSON has no inferred operation. */
-  }
+  if (
+    root !== undefined &&
+    Object.keys(root).length === 3 &&
+    typeof root['plan'] === 'string' &&
+    typeof root['expectedPlanRevision'] === 'string' &&
+    record(root['operation']) !== undefined
+  )
+    envelope =
+      ' Move unchanged operands into {input:{kind:append,plan,expectedPlanRevision,operation}} only if this is the intended pending-plan refinement.';
   if (addComment)
     return `Keep operation.text byte for byte; repair only the reported leaf. Use the intended node’s issued target; never guess or rewrite.${envelope}`;
   return `Use outer input object, not encoded JSON; advertised ${kind ?? 'intended'} branch, exact content/references. Missing/malformed kind does not imply create. create requires destination/tree; metadata in tree.initial, set/value or clear. edit: target/expectedRevision beside kind. append: operation; batch: operations beside plan/expectedPlanRevision, never nested. Copy target’s own editBasis; one tree per plan, independent saved roots need separate edits. Never replace failed refinement with creation.${envelope}`;
@@ -261,17 +255,11 @@ function validationHint(error: unknown): string {
   }
   return '';
 }
-function rejectedRemoval(name: string, input: string): boolean {
-  if (!['task', 'change_task'].includes(name)) return false;
-  try {
-    const outer = record(JSON.parse(input));
-    const type = record((record(outer?.['input']) ?? outer)?.['operation'])?.['type'];
-    return type === 'delete' || type === 'remove';
-  } catch {
-    return false;
-  }
+function rejectedRemoval(name: string, input: ArgumentObject): boolean {
+  const type = operationType(input);
+  return (name === 'task' || name === 'change_task') && (type === 'delete' || type === 'remove');
 }
-function schemaRepairMessage(name: string, input: string, error: unknown): string {
+function schemaRepairMessage(name: string, input: ArgumentObject, error: unknown): string {
   const common = `Arguments rejected; nothing ran. ${validationHint(error)} `;
   if (rejectedRemoval(name, input))
     return `${common}For whole-task deletion use change_task with the matched row’s issued edit and operation:{"type":"remove"}, complete:true. This previews the entire subtree.`;
@@ -289,16 +277,12 @@ function schemaRepairMessage(name: string, input: string, error: unknown): strin
     return `${common}input: create/title/text (path if requested), edit/target/expectedRevision/operation, or refine/plan/expectedPlanRevision/operation. Keep content/frozen path. replace-body: new-note plans only.`;
   return `${common}Match intended branch; preserve exact values/references.`;
 }
-function controlSchemaRepair(input: string): string {
-  try {
-    const intent = record(JSON.parse(input))?.['intent'];
-    if (intent === 'acknowledge-uncertainty' || intent === 'review')
-      return 'That recovery action is unavailable in this session. For ordinary work retry interpret({"intent":"plan"}) first; refine the current draft with its issued edit, or use create_task for an additional requested activity.';
-    if (intent === 'confirm')
-      return 'Nothing was saved. Confirmation requires approval containing the entire current userMessage verbatim when it approves the displayed proposal as shown. A subset needs nonempty exact issued selections; omit scope only for the whole proposal. If the message requests a revision, return to interpret({intent:"plan"}) and preview it; finish neither saves nor repairs control.';
-  } catch {
-    // Unparseable control has no known branch.
-  }
+function controlSchemaRepair(input: ArgumentObject): string {
+  const intent = input?.['intent'];
+  if (intent === 'acknowledge-uncertainty' || intent === 'review')
+    return 'That recovery action is unavailable in this session. For ordinary work retry interpret({"intent":"plan"}) first; refine the current draft with its issued edit, or use create_task for an additional requested activity.';
+  if (intent === 'confirm')
+    return 'Nothing was saved. Confirmation requires approval containing the entire current userMessage verbatim when it approves the displayed proposal as shown. A subset needs nonempty exact issued selections; omit scope only for the whole proposal. If the message requests a revision, return to interpret({intent:"plan"}) and preview it; finish neither saves nor repairs control.';
   return 'Use intended control branch only. Ordinary work needs no interpret. Control precedes work. new-session: disposition; transitionDisposition requires pending transition. Voice: voiceMode; the host checks trusted user instructions before research.';
 }
 function repairCall(ctx: CommandToolContext): ToolCallRepairFunction<ToolSet> {
@@ -312,7 +296,7 @@ function repairCall(ctx: CommandToolContext): ToolCallRepairFunction<ToolSet> {
     }
     ctx.feedback.set(
       toolCall.toolCallId,
-      schemaRepairMessage(toolCall.toolName, toolCall.input, error),
+      schemaRepairMessage(toolCall.toolName, argumentObject(toolCall.input), error),
     );
     return null;
   };
@@ -332,9 +316,8 @@ function accountRejectedMetadata(ctx: CommandToolContext, call: TypedToolCall<To
 }
 function accountRejected(ctx: CommandToolContext, call: TypedToolCall<ToolSet>): void {
   if (accountRejectedMetadata(ctx, call)) return;
-  const input = JSON.stringify(call.input);
   ctx.pendingOperations.reject(call.toolName, call.input);
-  const kind = rejectedKind(input);
+  const kind = rejectedKind(record(call.input));
   if (
     call.toolName === 'change_task' ||
     (call.toolName === 'task' &&
@@ -446,22 +429,27 @@ function soleWorkingCreation(state: CommandSessionSnapshot): string | undefined 
 }
 function repairLimit(ctx: CommandToolContext): CommandFailure {
   const reason = ctx.repairReason;
-  const detail = reason === undefined ? '' : ` First: ${reason.first}. Last: ${reason.latest}.`;
+  const state = hasMaterialCommandWork(ctx.session.snapshot())
+    ? commandMessage('Stopped. Your draft is retained.')
+    : commandMessage('Could not complete the request.');
+  const detail = reason === undefined ? '' : ` (${reason.first} → ${reason.latest})`;
   return new CommandFailure(
     'REPAIR_LIMIT',
-    `The request could not be prepared reliably. Your draft is retained.${detail} Review the retained draft and retry the unfinished instruction.`,
+    `${state} ${commandMessage('Retry the unfinished part of your request.')}${detail}`,
   );
 }
 export class CommandAgent implements CommandAgentPort {
-  private turnSequence = 0;
-  constructor(private readonly options: CommandAgentOptions) {}
+  private turnSequence_abyssPrivate = 0;
+  constructor(private readonly options_abyssPrivate: CommandAgentOptions) {}
   private model(
     ctx: CommandToolContext,
     signal: AbortSignal,
   ): ReturnType<typeof wrapLanguageModel> {
     let requestedAction = false;
     return wrapLanguageModel({
-      model: this.options.connections.model(parseAgentSettings(this.options.settings())),
+      model: this.options_abyssPrivate.connections.model(
+        parseAgentSettings(this.options_abyssPrivate.settings()),
+      ),
       middleware: {
         wrapGenerate: async ({ model: underlying, params }) => {
           const state = ctx.session.snapshot();
@@ -511,17 +499,18 @@ export class CommandAgent implements CommandAgentPort {
     start: number,
   ): CommandToolContext {
     const repairs = new Set<string>();
-    const turn = (++this.turnSequence).toString(36);
+    const turn = (++this.turnSequence_abyssPrivate).toString(36);
     const references = new CommandReferenceBook(turn);
     let repairsUsed = 0;
     const context: CommandToolContext = {
       userMessage: input.text,
-      temporalContext: this.options.temporalContext?.() ?? new Date(start).toISOString(),
-      api: this.options.api,
-      session: this.options.session,
+      temporalContext:
+        this.options_abyssPrivate.temporalContext?.() ?? new Date(start).toISOString(),
+      api: this.options_abyssPrivate.api,
+      session: this.options_abyssPrivate.session,
       basis: input.session,
       signal: input.signal,
-      now: this.options.now,
+      now: this.options_abyssPrivate.now,
       turnStart: start,
       deadline: start + 120000,
       researchMode: false,
@@ -539,7 +528,9 @@ export class CommandAgent implements CommandAgentPort {
       references,
       evidence: new CommandEvidence(),
       capabilities: new Set(['find', 'inspect', 'create_task', 'change_task']),
-      ...(this.options.research === undefined ? {} : { research: this.options.research }),
+      ...(this.options_abyssPrivate.research === undefined
+        ? {}
+        : { research: this.options_abyssPrivate.research }),
       repair: (call, reason) => {
         // Persist codes only: arguments, source text, credentials and provider bodies stay out.
         if (reason !== undefined && /^[a-z_]{1,32}: [A-Z_]{1,48}$/u.test(reason))
@@ -553,7 +544,7 @@ export class CommandAgent implements CommandAgentPort {
     };
     return context;
   }
-  private modelContext(snapshot: CommandSessionSnapshot): unknown {
+  private modelContext_abyssPrivate(snapshot: CommandSessionSnapshot): unknown {
     const actual = new Map(snapshot.actual.map((tree) => [tree.target, tree]));
     const pages = new Map(snapshot.entities.tasks.map((page) => [page.tree.target, page]));
     for (const target of actual.keys()) pages.delete(target);
@@ -594,7 +585,7 @@ export class CommandAgent implements CommandAgentPort {
       references: commandReferences(snapshot),
     };
   }
-  private activeTools(ctx: CommandToolContext): string[] {
+  private activeTools_abyssPrivate(ctx: CommandToolContext): string[] {
     const allowed = [...(ctx.capabilities ?? [])].filter(
       (name) => name !== 'research' || ctx.researchAdmission !== 'denied',
     );
@@ -610,25 +601,28 @@ export class CommandAgent implements CommandAgentPort {
       'finish',
       ...allowed.filter(
         (name) =>
-          !this.options.session.readOnly() ||
+          !this.options_abyssPrivate.session.readOnly() ||
           ['find', 'inspect', 'read', 'research'].includes(name),
       ),
     ];
   }
   async run(input: Parameters<CommandAgentPort['run']>[0]): Promise<void> {
-    const start = this.options.now();
+    const start = this.options_abyssPrivate.now();
     const ctx = this.context(input, start);
     const model = this.model(ctx, input.signal);
-    configureResearchAdmission(this.options, ctx, input, model);
+    configureResearchAdmission(this.options_abyssPrivate, ctx, input, model);
     ctx.reviewWrite =
-      this.options.reviewWrite ?? ((request) => reviewCommandWrite(model, request, input.signal));
+      this.options_abyssPrivate.reviewWrite ??
+      ((request) => reviewCommandWrite(model, request, input.signal));
     const tools = commandTools(ctx);
-    const policy = await this.options.api.tasks.creationPolicy?.().catch(() => undefined);
+    const policy = await this.options_abyssPrivate.api.tasks
+      .creationPolicy?.()
+      .catch(() => undefined);
     const clock = ctx.temporalContext;
     const instructions = `${commandPrompt}\n\ntemporalContext is the vault clock for this request: ${clock}. Resolve all relative dates from this local date.`;
     const prompt = JSON.stringify({
       creationPolicy: policy?.ok === true ? policy.value : undefined,
-      visibleSession: ctx.references?.project(this.modelContext(input.session)),
+      visibleSession: ctx.references?.project(this.modelContext_abyssPrivate(input.session)),
       userMessage: input.text,
     });
     if (prompt.length + instructions.length > COMMAND_CONTEXT_CHARACTERS)
@@ -652,11 +646,11 @@ export class CommandAgent implements CommandAgentPort {
         input.signal.throwIfAborted();
         if (ctx.repairExhausted) throw repairLimit(ctx);
         ctx.deadline = start + (ctx.researchMode ? 180000 : 120000);
-        if (this.options.now() >= ctx.deadline || ctx.done)
+        if (this.options_abyssPrivate.now() >= ctx.deadline || ctx.done)
           throw new CommandFailure('TIMEOUT', 'This request stopped. Your draft is retained.');
         return {
           instructions,
-          activeTools: this.activeTools(ctx),
+          activeTools: this.activeTools_abyssPrivate(ctx),
           maxOutputTokens: ctx.researchMode ? 8192 : 4096,
           messages: repairMessages(messages, ctx.feedback),
         };
@@ -683,12 +677,12 @@ export class CommandAgent implements CommandAgentPort {
     });
     input.signal.throwIfAborted();
     if (ctx.repairExhausted) throw repairLimit(ctx);
-    this.requireFinished(
+    this.requireFinished_abyssPrivate(
       ctx,
       result.steps.some((step) => step.content.some((part) => part.type === 'tool-error')),
     );
   }
-  private requireFinished(ctx: CommandToolContext, failed: boolean): void {
+  private requireFinished_abyssPrivate(ctx: CommandToolContext, failed: boolean): void {
     if (ctx.done && ctx.errors.size === 0 && !ctx.pendingOperations.unresolved) return;
     throw new CommandFailure(
       failed ? 'TOOL_ERROR' : 'INCOMPLETE',

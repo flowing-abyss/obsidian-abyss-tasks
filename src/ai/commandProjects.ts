@@ -3,8 +3,6 @@ import { parseProjectDate } from '../projects/projectDateValue';
 import { fieldCompatible } from '../projects/projectMetadataPolicy';
 import { CommandFailure, type CommandChange, type CommandFocus } from './commandTypes';
 
-export const projectMoveFocusMessage =
-  'Select the saved root task before moving it. The previous focus and proposal are retained.';
 export function projectMoveWithDescendantFocus(
   changes: readonly CommandChange[],
   focus: readonly CommandFocus[],

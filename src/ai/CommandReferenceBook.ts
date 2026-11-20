@@ -50,19 +50,22 @@ function projectTaskSource(
 }
 /** Turn-local SDK projection only. Neither aliases nor this book enter application state. */
 export class CommandReferenceBook {
-  private readonly aliases = new Map<string, { kind: CommandReferenceKind; value: string }>();
-  private readonly values = new Map<string, string>();
-  private readonly edits = new Map<string, Record<string, unknown>>();
+  private readonly aliases_abyssPrivate = new Map<
+    string,
+    { kind: CommandReferenceKind; value: string }
+  >();
+  private readonly values_abyssPrivate = new Map<string, string>();
+  private readonly edits_abyssPrivate = new Map<string, Record<string, unknown>>();
   private sequence = 0;
   constructor(private readonly turn: string) {}
   /** Comparison evidence for failed work only; never validates an executable reference. */
   identity(value: string): string {
-    const edit = this.edits.get(value)?.['target'];
-    return typeof edit === 'string' ? edit : (this.aliases.get(value)?.value ?? value);
+    const edit = this.edits_abyssPrivate.get(value)?.['target'];
+    return typeof edit === 'string' ? edit : (this.aliases_abyssPrivate.get(value)?.value ?? value);
   }
   issuedEntities(): ReadonlyArray<{ reference: string; kind: string }> {
     const kinds: Readonly<Record<string, string>> = { t: 'task', p: 'project', n: 'note' };
-    return [...this.aliases]
+    return [...this.aliases_abyssPrivate]
       .flatMap(([reference, entry]) => {
         const kind = kinds[entry.kind];
         return kind === undefined ? [] : [{ reference, kind }];
@@ -70,13 +73,13 @@ export class CommandReferenceBook {
       .slice(-64);
   }
   issuedFindEvidence(candidates: readonly string[]): string[] {
-    return candidates.flatMap((id) => this.issued('q', id) ?? []);
+    return candidates.flatMap((id) => this.issued_abyssPrivate('q', id) ?? []);
   }
   issuedTaskEdit(target: string | undefined, current: unknown): string | undefined {
     const rows = record(current)?.['taskReferences'];
     if (target === undefined || !Array.isArray(rows)) return undefined;
     const row: unknown = rows.find((value: unknown) => record(value)?.['target'] === target);
-    return this.editChoice('task', row)?.edit;
+    return this.editChoice_abyssPrivate('task', row)?.edit;
   }
   /** List the complete small current catalog only when every binding has already been issued. */
   issuedEditChoices(current: unknown): readonly EditChoice[] {
@@ -91,46 +94,55 @@ export class CommandReferenceBook {
     )
       return [];
     const choices = [
-      ...tasks.map((row: unknown) => this.editChoice('task', row)),
-      ...comments.map((row: unknown) => this.editChoice('comment', row)),
+      ...tasks.map((row: unknown) => this.editChoice_abyssPrivate('task', row)),
+      ...comments.map((row: unknown) => this.editChoice_abyssPrivate('comment', row)),
     ];
     return choices.every((choice): choice is EditChoice => choice !== undefined)
       ? [...new Map(choices.map((choice) => [choice.edit, choice])).values()]
       : [];
   }
-  private editChoice(kind: 'task' | 'comment', value: unknown): EditChoice | undefined {
+  private editChoice_abyssPrivate(
+    kind: 'task' | 'comment',
+    value: unknown,
+  ): EditChoice | undefined {
     const row = record(value);
-    const binding = this.editBinding(row);
+    const binding = this.editBinding_abyssPrivate(row);
     if (row?.['kind'] !== kind || binding === undefined) return undefined;
     const key = JSON.stringify(binding);
-    const edit = this.issued('b', key);
-    const target = this.issued(kind === 'task' ? 't' : 'c', row['target']);
-    if (edit === undefined || target === undefined || JSON.stringify(this.edits.get(edit)) !== key)
+    const edit = this.issued_abyssPrivate('b', key);
+    const target = this.issued_abyssPrivate(kind === 'task' ? 't' : 'c', row['target']);
+    if (
+      edit === undefined ||
+      target === undefined ||
+      JSON.stringify(this.edits_abyssPrivate.get(edit)) !== key
+    )
       return undefined;
     if (kind === 'task') return { edit, label: `task ${target}` };
-    const task = this.issued('t', row['ownerTarget']);
+    const task = this.issued_abyssPrivate('t', row['ownerTarget']);
     return task === undefined ? undefined : { edit, label: `comment ${target} on ${task}` };
   }
-  private issued(kind: CommandReferenceKind, value: unknown): string | undefined {
-    return typeof value === 'string' ? this.values.get(referenceKey(kind, value)) : undefined;
+  private issued_abyssPrivate(kind: CommandReferenceKind, value: unknown): string | undefined {
+    return typeof value === 'string'
+      ? this.values_abyssPrivate.get(referenceKey(kind, value))
+      : undefined;
   }
-  private issue(kind: CommandReferenceKind, value: string): string {
+  private issue_abyssPrivate(kind: CommandReferenceKind, value: string): string {
     const key = referenceKey(kind, value);
-    const existing = this.values.get(key);
+    const existing = this.values_abyssPrivate.get(key);
     if (existing !== undefined) return existing;
-    if (this.aliases.size >= 4096)
+    if (this.aliases_abyssPrivate.size >= 4096)
       throw new CommandFailure(
         'REFERENCE_LIMIT',
         'This turn has too many references. Read a smaller scope.',
       );
     const alias = `@${this.turn}:${kind}${++this.sequence}`;
-    this.aliases.set(alias, { kind, value });
-    this.values.set(key, alias);
+    this.aliases_abyssPrivate.set(alias, { kind, value });
+    this.values_abyssPrivate.set(key, alias);
     return alias;
   }
-  private resolve(kind: CommandReferenceKind, value: string): string {
+  private resolve_abyssPrivate(kind: CommandReferenceKind, value: string): string {
     if (!value.startsWith('@') && kind !== 'q') return value;
-    const reference = this.aliases.get(value);
+    const reference = this.aliases_abyssPrivate.get(value);
     if (reference?.kind !== kind)
       throw new CommandFailure('REFERENCE', 'Use an exact current reference of the required kind.');
     return reference.value;
@@ -141,7 +153,7 @@ export class CommandReferenceBook {
     type: string,
     current: unknown,
   ): { target: string; basis: Record<string, unknown> } {
-    const entry = this.currentEdit(alias, current);
+    const entry = this.currentEdit_abyssPrivate(alias, current);
     const kind = ['update-comment', 'remove-comment'].includes(type) ? 'comment' : 'task';
     if (entry['kind'] === 'comment' && type === 'remove') throw new CommentRemovalMismatch(alias);
     if (entry['kind'] !== kind)
@@ -151,15 +163,16 @@ export class CommandReferenceBook {
       );
     return { target: String(entry['target']), basis: { ...record(entry['editBasis']) } };
   }
-  private currentEdit(alias: string, current: unknown): Record<string, unknown> {
-    const entry = this.edits.get(alias);
+  private currentEdit_abyssPrivate(alias: string, current: unknown): Record<string, unknown> {
+    const entry = this.edits_abyssPrivate.get(alias);
     const rows =
       record(current)?.[entry?.['kind'] === 'comment' ? 'commentReferences' : 'taskReferences'];
     if (
       entry === undefined ||
       !Array.isArray(rows) ||
       !rows.some(
-        (row: unknown) => JSON.stringify(this.editBinding(record(row))) === JSON.stringify(entry),
+        (row: unknown) =>
+          JSON.stringify(this.editBinding_abyssPrivate(record(row))) === JSON.stringify(entry),
       )
     )
       throw new CommandFailure(
@@ -183,7 +196,7 @@ export class CommandReferenceBook {
       if (Object.entries(expected ?? {}).some(([key, value]) => request[key] !== value))
         return undefined;
     }
-    return JSON.stringify(this.editBinding(row));
+    return JSON.stringify(this.editBinding_abyssPrivate(row));
   }
   schemaRefinement(value: unknown, current: unknown): string | undefined {
     const input = record(value),
@@ -205,7 +218,7 @@ export class CommandReferenceBook {
       return undefined;
     }
   }
-  private editBinding(
+  private editBinding_abyssPrivate(
     input: Record<string, unknown> | undefined,
   ): Record<string, unknown> | undefined {
     if (input === undefined || record(input['editBasis']) === undefined) return undefined;
@@ -220,9 +233,10 @@ export class CommandReferenceBook {
     if (Array.isArray(value)) return value.map((item: unknown) => this.project(item, parent));
     const input = record(value);
     if (input === undefined) return value;
-    const binding = this.editBinding(input);
-    const edit = binding === undefined ? undefined : this.issue('b', JSON.stringify(binding));
-    if (edit !== undefined && binding !== undefined) this.edits.set(edit, binding);
+    const binding = this.editBinding_abyssPrivate(input);
+    const edit =
+      binding === undefined ? undefined : this.issue_abyssPrivate('b', JSON.stringify(binding));
+    if (edit !== undefined && binding !== undefined) this.edits_abyssPrivate.set(edit, binding);
     const projected = Object.fromEntries(
       Object.entries(input).map(([key, item]) => {
         if (key === 'source') {
@@ -235,7 +249,9 @@ export class CommandReferenceBook {
             return [
               key,
               record(
-                mapReferenceShape({ input: item }, shape, (kind, ref) => this.issue(kind, ref)),
+                mapReferenceShape({ input: item }, shape, (kind, ref) =>
+                  this.issue_abyssPrivate(kind, ref),
+                ),
               )?.['input'],
             ];
         }
@@ -243,7 +259,7 @@ export class CommandReferenceBook {
         return [
           key,
           typeof item === 'string' && kind !== undefined
-            ? this.issue(kind, item)
+            ? this.issue_abyssPrivate(kind, item)
             : this.project(item, key),
         ];
       }),
@@ -254,6 +270,6 @@ export class CommandReferenceBook {
     const shape = commandReferenceInputs[name];
     return shape === undefined
       ? value
-      : mapReferenceShape(value, shape, (kind, ref) => this.resolve(kind, ref));
+      : mapReferenceShape(value, shape, (kind, ref) => this.resolve_abyssPrivate(kind, ref));
   }
 }

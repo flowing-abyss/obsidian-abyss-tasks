@@ -21,10 +21,10 @@ import {
   commandMessage,
   completeWriteReadbackMessage,
   mergeAssessmentReviewMessage,
+  projectMoveFocusMessage,
   relatedContentReviewMessage,
 } from './commandMessages';
 import {
-  projectMoveFocusMessage,
   projectMoveWithDescendantFocus,
   sameCommandProjectSchema,
   validateCommandProject,

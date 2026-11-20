@@ -47,9 +47,18 @@ function addBranch(node: TaskBranch, versions: Set<string>): void {
   versions.add(versionKey(node));
   for (const child of node.children) addBranch(child, versions);
 }
-function narrows(original: CommandDiscovery, next: CommandDiscovery): boolean {
+function narrows(lookup: UnresolvedLookup, next: CommandDiscovery, task: TaskVersion): boolean {
+  const original = lookup.discovery;
+  const sameCandidate = original.query === next.query && lookup.candidates.has(versionKey(task));
+  // An incomplete page may never have included this physical row. Its exact path/line and
+  // every original filter must survive a fresh, complete, more specific search.
+  const coordinate =
+    !original.complete &&
+    typeof original.scope['sourceLine'] === 'number' &&
+    next.complete &&
+    next.query.toLowerCase().includes(original.query.toLowerCase());
   return (
-    original.query === next.query &&
+    (sameCandidate || coordinate) &&
     Object.entries(original.scope).every(([field, value]) =>
       retainedFilter(field, value, next.scope[field]),
     )
@@ -57,41 +66,47 @@ function narrows(original: CommandDiscovery, next: CommandDiscovery): boolean {
 }
 /** Accepted operation facts, never a model-authored interpretation of user obligations. */
 export class CommandEvidence {
-  private readonly facts: CommandFact[] = [];
-  private readonly removed = new Set<string>();
+  private readonly facts_abyssPrivate: CommandFact[] = [];
+  private readonly removed_abyssPrivate = new Set<string>();
   private readonly discoveries_abyssPrivate = new Map<string, CommandDiscovery>();
-  private readonly latest = new Map<string, CommandDiscovery>();
+  private readonly latest_abyssPrivate = new Map<string, CommandDiscovery>();
   private readonly unresolvedLookups_abyssPrivate = new Map<string, UnresolvedLookup>();
-  private readonly taskChanges = new Map<
+  private readonly taskChanges_abyssPrivate = new Map<
     string,
     Map<TaskEffect, { revision: string; prepared: boolean }>
   >();
-  private readonly retryResults = new Set<string>();
-  private readonly changeLookups = new Map<string, string>();
+  private readonly retryResults_abyssPrivate = new Set<string>();
+  private readonly changeLookups_abyssPrivate = new Map<string, string>();
   private readonly displayCorrections_abyssPrivate = new Map<string, Set<string>>();
-  private readonly savedDescendants = new Map<string, Set<string>>();
-  private readonly parentCorrections = new Set<string>();
+  private readonly savedDescendants_abyssPrivate = new Map<string, Set<string>>();
+  private readonly parentCorrections_abyssPrivate = new Set<string>();
   private acceptedTaskChangeSequence_abyssPrivate = 0;
   private readonly factSequence_abyssPrivate = new WeakMap<CommandFact, number>();
-  private selected = false;
+  private selected_abyssPrivate = false;
   clearFocus(empty = true): void {
-    this.selected = empty;
+    this.selected_abyssPrivate = empty;
     this.discard_abyssPrivate((fact) => fact.action === 'focus');
   }
   remove(target: string): void {
-    this.removed.add(target);
+    this.removed_abyssPrivate.add(target);
     this.discard_abyssPrivate((fact) => fact.target === target);
   }
   private discard_abyssPrivate(matches: (fact: CommandFact) => boolean): void {
-    for (let index = this.facts.length - 1; index >= 0; index--) {
-      const fact = this.facts[index];
-      if (fact !== undefined && matches(fact)) this.facts.splice(index, 1);
+    for (let index = this.facts_abyssPrivate.length - 1; index >= 0; index--) {
+      const fact = this.facts_abyssPrivate[index];
+      if (fact !== undefined && matches(fact)) this.facts_abyssPrivate.splice(index, 1);
     }
   }
   accept(fact: CommandFact): void {
-    if (fact.target !== undefined && this.removed.has(fact.target) && fact.removal !== true) return;
-    if (fact.action === 'change' && fact.target !== undefined) this.changed(fact, fact.target);
-    this.facts.push(fact);
+    if (
+      fact.target !== undefined &&
+      this.removed_abyssPrivate.has(fact.target) &&
+      fact.removal !== true
+    )
+      return;
+    if (fact.action === 'change' && fact.target !== undefined)
+      this.changed_abyssPrivate(fact, fact.target);
+    this.facts_abyssPrivate.push(fact);
     if (
       fact.action === 'change' &&
       fact.entity === 'task' &&
@@ -101,7 +116,7 @@ export class CommandEvidence {
       this.factSequence_abyssPrivate.set(fact, ++this.acceptedTaskChangeSequence_abyssPrivate);
     }
   }
-  private changed(fact: CommandFact, target: string): void {
+  private changed_abyssPrivate(fact: CommandFact, target: string): void {
     if (fact.removal === true) this.remove(target);
     else this.discard_abyssPrivate((old) => old.entity === fact.entity && old.target === target);
     if (fact.entity === 'task' && fact.revision !== undefined)
@@ -111,28 +126,31 @@ export class CommandEvidence {
       );
   }
   requestedRemoval(task: TaskVersion): boolean {
-    return this.taskChanges.get(task.target)?.get('remove')?.revision === task.revision;
+    return (
+      this.taskChanges_abyssPrivate.get(task.target)?.get('remove')?.revision === task.revision
+    );
   }
   settleTaskEffect(task: TaskVersion, effect: TaskEffect): void {
-    const required = this.taskChanges.get(task.target)?.get(effect);
+    const required = this.taskChanges_abyssPrivate.get(task.target)?.get(effect);
     if (required?.revision === task.revision) required.prepared = true;
   }
   allowRemoval(target: string): void {
-    if (this.taskChanges.size === 0 && this.unresolvedLookups_abyssPrivate.size === 0) return;
-    if (this.taskChanges.get(target)?.has('remove') === true) return;
+    if (this.taskChanges_abyssPrivate.size === 0 && this.unresolvedLookups_abyssPrivate.size === 0)
+      return;
+    if (this.taskChanges_abyssPrivate.get(target)?.has('remove') === true) return;
     throw new CommandFailure(
       'REMOVE_SCOPE',
       'This task is outside the requested removal. Nothing was staged. Use the verified removal target, or locate each additional removal explicitly requested by the user.',
     );
   }
-  private retryableDiscovery(previous: string): CommandDiscovery {
+  private retryableDiscovery_abyssPrivate(previous: string): CommandDiscovery {
     const old = this.discoveries_abyssPrivate.get(previous);
     if (
       old === undefined ||
       !old.complete ||
       old.count !== 0 ||
-      this.latest.get(this.queryKey_abyssPrivate(old)) !== old ||
-      this.retryResults.has(previous)
+      this.latest_abyssPrivate.get(this.queryKey_abyssPrivate(old)) !== old ||
+      this.retryResults_abyssPrivate.has(previous)
     )
       throw new CommandFailure(
         'LOOKUP_RETRY',
@@ -141,7 +159,7 @@ export class CommandEvidence {
     return old;
   }
   retryTaskLookup(previous: string, next: string, purpose: unknown): void {
-    const old = this.retryableDiscovery(previous),
+    const old = this.retryableDiscovery_abyssPrivate(previous),
       current = this.discoveries_abyssPrivate.get(next);
     const key = JSON.stringify([purpose, this.queryKey_abyssPrivate(old)]);
     if (
@@ -155,12 +173,18 @@ export class CommandEvidence {
         'Retry the empty lookup with alternate wording, the same purpose and the same filters.',
       );
     this.unresolvedLookups_abyssPrivate.delete(key);
-    this.retryResults.add(next);
+    this.retryResults_abyssPrivate.add(next);
   }
-  private correctionRoots(previous: string, next: string, page: readonly TaskVersion[]): string[] {
+  private correctionRoots_abyssPrivate(
+    previous: string,
+    next: string,
+    page: readonly TaskVersion[],
+  ): string[] {
     const old = this.discoveries_abyssPrivate.get(previous),
       current = this.discoveries_abyssPrivate.get(next);
-    const matching = page.map(versionKey).filter((key) => this.changeLookups.get(key) === previous);
+    const matching = page
+      .map(versionKey)
+      .filter((key) => this.changeLookups_abyssPrivate.get(key) === previous);
     if (
       old === undefined ||
       current === undefined ||
@@ -176,38 +200,38 @@ export class CommandEvidence {
     return matching;
   }
   correctDisplayLookup(previous: string, next: string, page: readonly TaskVersion[]): void {
-    for (const key of this.correctionRoots(previous, next, page))
+    for (const key of this.correctionRoots_abyssPrivate(previous, next, page))
       this.displayCorrections_abyssPrivate.set(key, new Set([key]));
   }
   correctParentLookup(previous: string, next: string, page: readonly TaskVersion[]): void {
-    const [root, ...other] = this.correctionRoots(previous, next, page);
+    const [root, ...other] = this.correctionRoots_abyssPrivate(previous, next, page);
     const task = page.find((candidate) => versionKey(candidate) === root);
     if (
       page.length !== 1 ||
       root === undefined ||
       other.length > 0 ||
       task === undefined ||
-      this.taskChanges.get(task.target)?.get('change')?.revision !== task.revision ||
-      !this.savedDescendants.has(root)
+      this.taskChanges_abyssPrivate.get(task.target)?.get('change')?.revision !== task.revision ||
+      !this.savedDescendants_abyssPrivate.has(root)
     )
       throw new CommandFailure(
         'LOOKUP_RETRY',
         'Use the same verified parent to locate its requested child.',
       );
-    this.parentCorrections.add(root);
+    this.parentCorrections_abyssPrivate.add(root);
   }
   observeSavedBranch(tree: TaskBranch): void {
     const key = versionKey(tree);
-    if (this.changeLookups.has(key) && tree.children.length > 0) {
+    if (this.changeLookups_abyssPrivate.has(key) && tree.children.length > 0) {
       const descendants = new Set<string>();
       for (const child of tree.children) addBranch(child, descendants);
-      this.savedDescendants.set(key, descendants);
+      this.savedDescendants_abyssPrivate.set(key, descendants);
     }
     for (const branch of this.displayCorrections_abyssPrivate.values()) {
       if (branch.has(key)) addBranch(tree, branch);
     }
   }
-  private correctedRoots(displayed: readonly TaskVersion[]): Set<string> {
+  private correctedRoots_abyssPrivate(displayed: readonly TaskVersion[]): Set<string> {
     const roots = new Set<string>();
     for (const task of displayed) {
       const version = versionKey(task);
@@ -231,12 +255,21 @@ export class CommandEvidence {
     if (effect === 'change')
       for (const key of page.map(versionKey)) {
         this.displayCorrections_abyssPrivate.delete(key);
-        this.parentCorrections.delete(key);
-        this.changeLookups.set(key, evidence);
+        this.parentCorrections_abyssPrivate.delete(key);
+        this.changeLookups_abyssPrivate.set(key, evidence);
       }
     if (task === undefined) this.recordUnresolvedLookup_abyssPrivate(key, fact, effect, page);
     else this.recordResolvedLookup_abyssPrivate(key, fact, effect, task);
     return fact;
+  }
+  missingTaskCoordinate(id?: string): boolean {
+    const current = this.discoveries_abyssPrivate.get(id ?? '');
+    return [...this.unresolvedLookups_abyssPrivate.values()].some(
+      ({ discovery }) =>
+        discovery.scope['sourceLine'] !== undefined &&
+        (id === undefined ||
+          (discovery === current && discovery.complete && discovery.count === 0)),
+    );
   }
   private recordUnresolvedLookup_abyssPrivate(
     key: string,
@@ -263,10 +296,10 @@ export class CommandEvidence {
     const retained = this.resolveNarrowed_abyssPrivate(fact, effect, task);
     this.unresolvedLookups_abyssPrivate.delete(key);
     const required =
-      this.taskChanges.get(task.target) ??
+      this.taskChanges_abyssPrivate.get(task.target) ??
       new Map<TaskEffect, { revision: string; prepared: boolean }>();
     required.set(effect, { revision: task.revision, prepared: retained });
-    this.taskChanges.set(task.target, required);
+    this.taskChanges_abyssPrivate.set(task.target, required);
   }
   private resolveNarrowed_abyssPrivate(
     fact: CommandDiscovery,
@@ -275,11 +308,7 @@ export class CommandEvidence {
   ): boolean {
     let retained = false;
     for (const [key, other] of this.unresolvedLookups_abyssPrivate) {
-      if (
-        other.effect === effect &&
-        narrows(other.discovery, fact) &&
-        other.candidates.has(versionKey(task))
-      ) {
+      if (other.effect === effect && narrows(other, fact, task)) {
         if (
           effect === 'change' &&
           fact.complete &&
@@ -304,7 +333,7 @@ export class CommandEvidence {
         lookup.discovery.count < 2)
     )
       return false;
-    return this.facts.some((fact) => {
+    return this.facts_abyssPrivate.some((fact) => {
       const sequence = this.factSequence_abyssPrivate.get(fact);
       return (
         sequence !== undefined &&
@@ -320,9 +349,9 @@ export class CommandEvidence {
       );
     });
   }
-  private preparedDescendant(root: string): boolean {
-    const branch = this.savedDescendants.get(root);
-    return this.facts.some(
+  private preparedDescendant_abyssPrivate(root: string): boolean {
+    const branch = this.savedDescendants_abyssPrivate.get(root);
+    return this.facts_abyssPrivate.some(
       (fact) =>
         fact.action === 'change' &&
         fact.entity === 'task' &&
@@ -332,7 +361,7 @@ export class CommandEvidence {
         branch?.has(versionKey({ target: fact.target, revision: fact.revision })) === true,
     );
   }
-  private checkUnresolvedLookups(corrected: Set<string>): void {
+  private checkUnresolvedLookups_abyssPrivate(corrected: Set<string>): void {
     const unresolved = [...this.unresolvedLookups_abyssPrivate.values()].filter(
       (lookup) =>
         lookup.effect !== 'change' ||
@@ -340,7 +369,7 @@ export class CommandEvidence {
         ![...corrected].some(
           (key) =>
             lookup.candidates.has(key) &&
-            this.discoveries_abyssPrivate.get(this.changeLookups.get(key) ?? '') ===
+            this.discoveries_abyssPrivate.get(this.changeLookups_abyssPrivate.get(key) ?? '') ===
               lookup.discovery,
         ),
     );
@@ -368,8 +397,8 @@ export class CommandEvidence {
   }
   requiresTaskContentPreparation(): boolean {
     return (
-      this.facts.some((fact) => fact.action === 'research' && fact.entity === 'web') &&
-      !this.facts.some(
+      this.facts_abyssPrivate.some((fact) => fact.action === 'research' && fact.entity === 'web') &&
+      !this.facts_abyssPrivate.some(
         (fact) =>
           ['create', 'change'].includes(fact.action) &&
           fact.entity === 'task' &&
@@ -383,12 +412,12 @@ export class CommandEvidence {
     current?: unknown,
     allowDisplayRetry?: boolean,
   ): void {
-    const corrected = this.correctedRoots(displayed);
-    this.checkUnresolvedLookups(corrected);
-    for (const root of this.parentCorrections) {
-      if (this.preparedDescendant(root)) corrected.add(root);
+    const corrected = this.correctedRoots_abyssPrivate(displayed);
+    this.checkUnresolvedLookups_abyssPrivate(corrected);
+    for (const root of this.parentCorrections_abyssPrivate) {
+      if (this.preparedDescendant_abyssPrivate(root)) corrected.add(root);
     }
-    for (const [target, required] of this.taskChanges) {
+    for (const [target, required] of this.taskChanges_abyssPrivate) {
       const removal = required.get('remove');
       if (removal !== undefined && !removal.prepared)
         throw new CommandFailure(
@@ -414,7 +443,7 @@ export class CommandEvidence {
     displayed: readonly TaskVersion[],
     allowed: boolean | undefined,
   ): TaskVersion | undefined {
-    return allowed !== false && this.taskChanges.size === 1 && displayed.length === 1
+    return allowed !== false && this.taskChanges_abyssPrivate.size === 1 && displayed.length === 1
       ? displayed[0]
       : undefined;
   }
@@ -422,14 +451,14 @@ export class CommandEvidence {
     root: string,
     references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence'>>,
   ): { lookup: CommandDiscovery; retryOf: string } | undefined {
-    const id = this.changeLookups.get(root);
+    const id = this.changeLookups_abyssPrivate.get(root);
     if (id === undefined) return undefined;
     const lookup = this.discoveries_abyssPrivate.get(id);
     const retryOf = references?.issuedFindEvidence?.([id])[0];
     return retryOf !== undefined &&
       lookup?.complete === true &&
       lookup.count === 1 &&
-      this.latest.get(this.queryKey_abyssPrivate(lookup)) === lookup
+      this.latest_abyssPrivate.get(this.queryKey_abyssPrivate(lookup)) === lookup
       ? { lookup, retryOf }
       : undefined;
   }
@@ -443,7 +472,7 @@ export class CommandEvidence {
     const correction = this.currentChangeLookup_abyssPrivate(root, references);
     if (correction !== undefined) {
       const { lookup, retryOf } = correction;
-      if (this.preparedDescendant(root)) {
+      if (this.preparedDescendant_abyssPrivate(root)) {
         const scope = { ...lookup.scope };
         Reflect.deleteProperty(scope, 'limit');
         const find = { query: lookup.query, ...scope, purpose: 'locate-child', retryOf };
@@ -468,12 +497,12 @@ export class CommandEvidence {
   discovery(fact: CommandDiscovery): string {
     const evidence = `discovery:${this.discoveries_abyssPrivate.size + 1}`;
     this.discoveries_abyssPrivate.set(evidence, fact);
-    this.latest.set(this.queryKey_abyssPrivate(fact), fact);
+    this.latest_abyssPrivate.set(this.queryKey_abyssPrivate(fact), fact);
     return evidence;
   }
   /** Candidates for the generation's find schema. Execution still checks purpose, filters and targets. */
   retryableFindEvidence(): string[] {
-    const changes = new Set(this.changeLookups.values());
+    const changes = new Set(this.changeLookups_abyssPrivate.values());
     const pending = new Set(
       [...this.unresolvedLookups_abyssPrivate.values()].map((lookup) => lookup.discovery),
     );
@@ -484,14 +513,17 @@ export class CommandEvidence {
           (changes.has(id) ||
             (fact.count === 0 &&
               pending.has(fact) &&
-              !this.retryResults.has(id) &&
-              this.latest.get(this.queryKey_abyssPrivate(fact)) === fact)),
+              !this.retryResults_abyssPrivate.has(id) &&
+              this.latest_abyssPrivate.get(this.queryKey_abyssPrivate(fact)) === fact)),
       )
       .map(([id]) => id);
   }
   question(kind: string, evidence: string): CommandDiscovery {
     const fact = this.discoveries_abyssPrivate.get(evidence);
-    if (fact !== undefined && this.latest.get(this.queryKey_abyssPrivate(fact)) === fact) {
+    if (
+      fact !== undefined &&
+      this.latest_abyssPrivate.get(this.queryKey_abyssPrivate(fact)) === fact
+    ) {
       if (this.supports_abyssPrivate(kind, fact)) return fact;
       if (fact.entity === 'task' && fact.complete && fact.count === 1)
         throw new CommandFailure(
@@ -514,10 +546,15 @@ export class CommandEvidence {
     return kind === 'not-found' ? fact.count === 0 : kind === 'ambiguous' && fact.count > 1;
   }
   ready(coverage?: 'page'): 'prepared' | 'selected' | 'observed' | 'found' {
-    if (this.facts.some((fact) => ['create', 'change'].includes(fact.action))) return 'prepared';
-    if (this.selected || this.facts.some((fact) => fact.action === 'focus')) return 'selected';
+    if (this.facts_abyssPrivate.some((fact) => ['create', 'change'].includes(fact.action)))
+      return 'prepared';
     if (
-      this.facts.some(
+      this.selected_abyssPrivate ||
+      this.facts_abyssPrivate.some((fact) => fact.action === 'focus')
+    )
+      return 'selected';
+    if (
+      this.facts_abyssPrivate.some(
         (fact) =>
           ['inspect', 'research'].includes(fact.action) &&
           fact.entity !== 'catalog' &&
@@ -525,7 +562,9 @@ export class CommandEvidence {
       )
     )
       return 'observed';
-    const searches = [...this.latest.values()].filter((fact) => fact.entity !== 'catalog');
+    const searches = [...this.latest_abyssPrivate.values()].filter(
+      (fact) => fact.entity !== 'catalog',
+    );
     if (searches.length > 0 && (coverage === 'page' || searches.every((fact) => fact.complete)))
       return 'found';
     throw new CommandFailure(

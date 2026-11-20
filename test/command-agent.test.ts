@@ -3910,13 +3910,236 @@ it.each([
     expect(await h.read(controlPath)).toBe(controlSource);
   },
 );
+function findWithExpansion(input: Record<string, unknown>) {
+  const lookup = call('find', input);
+  return {
+    ...lookup,
+    content: [...lookup.content, ...call('expand', { capabilities: ['read'] }).content],
+  };
+}
+it('asks for the missing task coordinate without another model generation', async () => {
+  const h = await setup({ 'a.md': '- [ ] Unique\n' });
+  h.script(() =>
+    call('find', { query: 'Unique', path: 'a.md', sourceLine: 99, purpose: 'remove' }),
+  );
+  await h.session.submit('Remove Unique at a.md line 99.');
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().status.message).toContain('a.md:99');
+  expect(h.model.doGenerateCalls).toHaveLength(1);
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Unique\n');
+  h.script(
+    () => call('find', { query: 'Unique', path: 'a.md', sourceLine: 1, purpose: 'remove' }),
+    () =>
+      call('change_task', {
+        edit: record(latestToolValue(h, 'find')['match'])?.['edit'],
+        operation: { type: 'remove' },
+        complete: true,
+      }),
+  );
+  await h.session.submit('Use a.md line 1.');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Unique\n');
+});
+it.each([undefined, 1])(
+  'retains a missing source coordinate when the model retries with line %s',
+  async (fallback) => {
+    const source = '- [ ] Unique\n';
+    const h = await setup({ 'a.md': source });
+    const query = { query: 'Unique', path: 'a.md', purpose: 'change' };
+    let evidence = '';
+    h.script(
+      () => findWithExpansion({ ...query, sourceLine: 99 }),
+      () => {
+        evidence = String(latestToolValue(h, 'find')['evidence']);
+        return call('find', { ...query, sourceLine: fallback });
+      },
+      () =>
+        call('change_task', {
+          edit: record(latestToolValue(h, 'find')['match'])?.['edit'],
+          operation: { type: 'set', due: '2026-12-31' },
+          complete: true,
+        }),
+      () => call('finish', { state: 'question', blockingIssue: { kind: 'not-found', evidence } }),
+    );
+    await h.session.submit('Set the due date on Unique at a.md line 99 to December 31.');
+    expect(h.session.snapshot().proposal.changes).toEqual([]);
+    expect(h.session.snapshot().status.kind).toBe('question');
+    expect(h.session.snapshot().status.message).toContain('a.md:99');
+    expect(h.session.snapshot().journal).toEqual([]);
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
+it('retains the source coordinate for an already-issued sibling edit in the same response', async () => {
+  const source = '- [ ] Unique\n';
+  const h = await setup({ 'a.md': source });
+  const query = { query: 'Unique', path: 'a.md' };
+  h.script(
+    () => call('find', { ...query, purpose: 'show-only' }),
+    () => {
+      const edit = record(latestToolValue(h, 'find')['match'])?.['edit'];
+      const missing = call('find', { ...query, sourceLine: 99, purpose: 'change' });
+      const mutation = call('change_task', { edit, operation: { type: 'set', due: '2026-12-31' } });
+      return { ...missing, content: [...missing.content, ...mutation.content] };
+    },
+    () =>
+      call('finish', {
+        state: 'question',
+        blockingIssue: {
+          kind: 'not-found',
+          evidence: latestToolValue(h, 'find')['evidence'],
+        },
+      }),
+  );
+  await h.session.submit('Change Unique on line 99 in a.md.');
+  expect(h.session.snapshot().proposal.changes).toEqual([]);
+  expect(h.session.snapshot().status.kind).toBe('question');
+  expect(h.session.snapshot().journal).toEqual([]);
+  expect(await h.read('a.md')).toBe(source);
+});
+it.each([true, false])(
+  'narrows an actual paginated source coordinate without moving it (%s)',
+  async (sameOwner) => {
+    const source = Array.from(
+      { length: 53 },
+      (_, index) => `- [ ] Release ${index + 1} marker\n`,
+    ).join('');
+    const h = await setup({ 'a.md': source });
+    const query = { query: 'Release', path: 'a.md', sourceLine: 53, purpose: 'change' };
+    let cursor: unknown;
+    let pageEvidence: unknown;
+    let guidance: unknown;
+    h.script(
+      () => call('find', query),
+      () => {
+        const first = latestToolValue(h, 'find');
+        cursor = first['nextCursor'];
+        expect(typeof cursor).toBe('string');
+        return call('find', { ...query, cursor });
+      },
+      () => {
+        const second = latestToolValue(h, 'find');
+        expect(second['items']).toHaveLength(3);
+        expect(second['match']).toBeUndefined();
+        guidance = second['next'];
+        pageEvidence = second['evidence'];
+        const line = sameOwner ? 53 : 52;
+        return call('find', { ...query, query: `Release ${line} marker`, sourceLine: line });
+      },
+      () =>
+        call('change_task', {
+          edit: record(latestToolValue(h, 'find')['match'])?.['edit'],
+          operation: { type: 'set', due: '2026-12-31' },
+          complete: true,
+        }),
+      () =>
+        call('finish', {
+          state: 'question',
+          blockingIssue: { kind: 'incomplete', evidence: pageEvidence },
+        }),
+    );
+    await h.session.submit('Set the due date on Release at a.md line 53 to December 31.');
+    expect(guidance).toContain('same path and line');
+    expect(h.model.doGenerateCalls.length).toBeLessThanOrEqual(5);
+    expect(h.session.snapshot().status.kind).toBe(sameOwner ? 'ready' : 'question');
+    if (sameOwner)
+      expect(h.session.snapshot().proposal.changes).toMatchObject([
+        {
+          plan: {
+            before: { title: 'Release 53 marker' },
+            after: { dates: { due: '2026-12-31' } },
+          },
+        },
+      ]);
+    else {
+      expect(h.session.snapshot().status.message).toContain('a.md:53');
+      expect(h.session.snapshot().proposal.changes).toEqual([]);
+    }
+    expect(h.session.snapshot().journal).toEqual([]);
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
+it('accepts the exact source coordinate on a complete retry after partial evidence', async () => {
+  const source = '- [ ] Sibling\n- [ ] Unique\n';
+  let partial = true;
+  const h = await setup({ 'a.md': source }, {}, (api) => {
+    const search = expectDefined(api.tasks.search);
+    return {
+      ...api,
+      tasks: {
+        ...api.tasks,
+        search: async (input) => {
+          const result = await search(input);
+          if (!partial || !result.ok) return result;
+          partial = false;
+          return { ...result, value: { ...result.value, complete: false, truncated: true } };
+        },
+      },
+    };
+  });
+  const find = () =>
+    call('find', { query: 'Unique', path: 'a.md', sourceLine: 2, purpose: 'change' });
+  h.script(
+    find,
+    () => {
+      expect(latestToolValue(h, 'find')['match']).toBeUndefined();
+      return find();
+    },
+    () =>
+      call('change_task', {
+        edit: record(latestToolValue(h, 'find')['match'])?.['edit'],
+        operation: { type: 'set', due: '2026-12-31' },
+        complete: true,
+      }),
+  );
+  await h.session.submit('Set the due date on Unique at a.md line 2 to December 31.');
+  expect(h.session.snapshot().status.kind).toBe('ready');
+  expect(h.session.snapshot().proposal.changes).toMatchObject([
+    {
+      kind: 'task',
+      plan: { before: { title: 'Unique' }, after: { dates: { due: '2026-12-31' } } },
+    },
+  ]);
+  expect(await h.read('a.md')).toBe(source);
+});
+
+it.each([undefined, 'show-only'])(
+  'keeps a read-only source coordinate miss separate from requested edits (%s)',
+  async (purpose) => {
+    const source = '- [ ] Unique\n';
+    const h = await setup({ 'a.md': source });
+    h.script(
+      () => call('find', { query: 'Unknown', path: 'a.md', sourceLine: 99, purpose }),
+      () => call('find', { query: 'Unique', path: 'a.md', sourceLine: 1, purpose: 'change' }),
+      () =>
+        call('change_task', {
+          edit: record(latestToolValue(h, 'find')['match'])?.['edit'],
+          operation: { type: 'set', due: '2026-12-31' },
+          complete: true,
+        }),
+    );
+    await h.session.submit(
+      'Look for Unknown at line 99. Also set the date on Unique at line 1 to December 31.',
+    );
+    expect(h.session.snapshot().status.kind).toBe('ready');
+    expect(h.session.snapshot().proposal.changes).toHaveLength(1);
+    expect(await h.read('a.md')).toBe(source);
+  },
+);
 it('does not fall back to a unique row when the requested source line is absent', async () => {
   const source = '- [ ] Unique\n';
   const h = await setup({ 'Exact path.md': source });
   let result: Record<string, unknown> = {};
   h.script(
     () =>
-      call('find', { query: 'Unique', path: 'Exact path.md', sourceLine: 99, purpose: 'change' }),
+      findWithExpansion({
+        query: 'Unique',
+        path: 'Exact path.md',
+        sourceLine: 99,
+        purpose: 'change',
+      }),
     () => {
       result = latestToolValue(h, 'find');
       return finish('Which source line should I use?', true)();
@@ -3953,7 +4176,7 @@ it('requires the returned row path to equal the source coordinate path', async (
   let result: Record<string, unknown> = {};
   h.script(
     () =>
-      call('find', {
+      findWithExpansion({
         query: 'Unique',
         path: 'Requested path.md',
         sourceLine: 1,
@@ -10195,9 +10418,7 @@ it.each([false, true])(
         JSON.stringify(h.model.doGenerateCalls[h.model.doGenerateCalls.length - 1]?.prompt),
       ).toContain('only if this is the intended pending-plan refinement');
       expect(h.session.snapshot().status.kind).toBe('error');
-      expect(h.session.snapshot().status.message).toContain(
-        'The request could not be prepared reliably. Your draft is retained.',
-      );
+      expect(h.session.snapshot().status.message).toContain('Stopped. Your draft is retained.');
       expect(h.session.snapshot().proposal).toEqual(before);
       expect(h.preparations()).toBe(count);
       return;
@@ -10694,6 +10915,71 @@ function projectApiFixture(api: TasksApiV1): TasksApiV1 {
     } as unknown as NonNullable<TasksApiV1['projects']>,
   };
 }
+it('supplies the executable project lookup when expanding the project and read tools', async () => {
+  const source = '- [ ] Vendor call #keep\n';
+  const h = await setup({ 'Launch.md': source, 'Archive.md': source }, {}, projectApiFixture);
+  h.script(
+    () => call('expand', { capabilities: ['project', 'read'] }),
+    () => {
+      const hint = latestToolValue(h, 'expand')['projectList'];
+      expect(hint).toEqual({ tool: 'read', arguments: { input: { kind: 'projects' } } });
+      const args = expectDefined(record(record(hint)?.['arguments']));
+      return call('read', args['input']);
+    },
+    () => {
+      const rows = latestToolValue(h, 'read')['items'];
+      const project: unknown = Array.isArray(rows)
+        ? rows.find((row) => record(row)?.['name'] === 'Launch')
+        : undefined;
+      return call('find', {
+        path: expectDefined(record(project)?.['path']),
+        query: 'Vendor call',
+        purpose: 'show-only',
+      });
+    },
+    () => call('finish', { state: 'ready', selection: [latestToolValue(h, 'find')['selection']] }),
+  );
+  await h.session.submit('Select Vendor call in the Launch project.');
+  const snapshot = h.session.snapshot();
+  expect(snapshot.status.kind).toBe('ready');
+  expect(snapshot.focus).toMatchObject([{ kind: 'task' }]);
+  expect(snapshot.proposal.changes).toEqual([]);
+  expect(
+    snapshot.entities.tasks.some(
+      (page) =>
+        page.tree.source?.path === 'Launch.md' && page.tree.target === snapshot.focus[0]?.target,
+    ),
+  ).toBe(true);
+  expect(await h.read('Launch.md')).toBe(source);
+  expect(await h.read('Archive.md')).toBe(source);
+});
+
+it('keeps a misaddressed catalog call from completing a requested project edit', async () => {
+  configureCommandLocale('ru');
+  try {
+    const h = await setup({ 'a.md': '' }, {}, projectApiFixture);
+    h.script(
+      interpret(),
+      () => call('project', { kind: 'projects' }),
+      () => call('read', { kind: 'projects' }),
+      finish(),
+      finish(),
+      finish(),
+    );
+    await h.session.submit('Измени дату начала проекта Launch на 31 декабря.');
+    const snapshot = h.session.snapshot();
+    expect(snapshot.status.kind).toBe('error');
+    expect(snapshot.status.message).toContain('Не удалось выполнить запрос.');
+    expect(snapshot.status.message).toContain('Повторите невыполненную часть запроса.');
+    expect(snapshot.status.message).toContain('project: INVALID_ARGUMENTS');
+    expect(snapshot.status.message).toContain('finish: UNRESOLVED');
+    expect(snapshot.proposal.changes).toEqual([]);
+    expect(snapshot.journal).toEqual([]);
+  } finally {
+    configureCommandLocale('en');
+  }
+});
+
 it('checks project changed values by field ID against prepared after state', async () => {
   const h = await setup({ 'a.md': '' }, {}, projectApiFixture);
   h.script(

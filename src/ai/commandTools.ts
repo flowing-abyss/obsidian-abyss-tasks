@@ -26,11 +26,11 @@ import {
   commandDiagnostic,
   commandMessage,
   draftDispositionMessage,
+  projectMoveFocusMessage,
 } from './commandMessages';
 import { modelToolSchema } from './commandModelSchema';
 import type { CommandPendingOperations } from './CommandPendingOperations';
 import {
-  projectMoveFocusMessage,
   projectMoveWithDescendantFocus,
   sameCommandProjectSchema,
   validateCommandProject,
@@ -179,6 +179,12 @@ export function canonicalToolName(name: string): string {
   if (['create_task', 'change_task'].includes(name)) return 'task';
   return ['find', 'inspect'].includes(name) ? 'read' : name;
 }
+function preparesTask(name: string, input: unknown): boolean {
+  return (
+    ['task', 'status', 'link', 'cleanup'].includes(canonicalToolName(name)) ||
+    (name === 'project' && record(input)?.['kind'] === 'move-task')
+  );
+}
 const findSchema = readSchema.options[0]
   .omit({ kind: true })
   .extend({
@@ -246,21 +252,28 @@ type TaskSearchSelector = Pick<
   FindRequest,
   'query' | 'path' | 'sourceLine' | 'showExact' | 'taskId'
 >;
+function wholeSearchPage(result: TaskSearchPageV1, cursor: string | undefined): boolean {
+  return (
+    cursor === undefined && result.complete && !result.truncated && result.nextCursor === undefined
+  );
+}
+function sourceRows(
+  items: readonly TaskDtoV1[],
+  path: string | undefined,
+  line: number | undefined,
+): readonly TaskDtoV1[] {
+  return line === undefined
+    ? items
+    : items.filter((row) => row.source.path === path && row.source.line + 1 === line);
+}
 function soleTask(
   result: TaskSearchResult,
   cursor: string | undefined,
   selector: TaskSearchSelector,
 ): TaskDtoV1 | undefined {
-  if (
-    cursor !== undefined ||
-    !result.complete ||
-    result.truncated ||
-    result.nextCursor !== undefined
-  )
-    return undefined;
-  const matches = result.items.filter((row) => {
-    if (selector.sourceLine !== undefined)
-      return row.source.path === selector.path && row.source.line + 1 === selector.sourceLine;
+  if (!wholeSearchPage(result, cursor)) return undefined;
+  const matches = sourceRows(result.items, selector.path, selector.sourceLine).filter((row) => {
+    if (selector.sourceLine !== undefined) return true;
     if (selector.taskId !== undefined) return exactTaskMatch(row, selector.taskId, 'id');
     return (
       result.items.length === 1 ||
@@ -428,8 +441,8 @@ class CommandToolOwner {
     return {
       ...projected,
       execute: (input, options) => {
-        if (!this.admit_abyssPrivate(name, options.toolCallId))
-          return { notExecuted: 'Turn already finished.' };
+        const deferred = this.admit_abyssPrivate(name, options.toolCallId, input);
+        if (deferred !== undefined) return { notExecuted: deferred };
         let canonical: unknown;
         try {
           canonical = this.adapterInput_abyssPrivate(name, input);
@@ -463,23 +476,26 @@ class CommandToolOwner {
           async (): Promise<unknown> => execute(canonical, options) as unknown,
           name === 'create_task' ? (createTaskSchema.parse(input).retryOf ?? null) : undefined,
         );
-        return this.finishIfRequested({ name, input, id: options.toolCallId }, result, canonical);
+        return this.finishIfRequested_abyssPrivate(
+          { name, input, id: options.toolCallId },
+          result,
+          canonical,
+        );
       },
     };
   }
-  private async finishIfRequested(
+  private async finishIfRequested_abyssPrivate(
     { name, input, id }: { name: string; input: unknown; id: string },
     work: Promise<unknown>,
     canonical: unknown,
   ): Promise<unknown> {
     const preview = await work;
-    if (name === 'find')
-      return lookupFeedback(record(input)?.['purpose'], preview, this.inspections_abyssPrivate);
+    if (name === 'find') return this.finishLookup_abyssPrivate(input, preview, id);
     const operand = record(record(canonical)?.['input']);
     if (
       completesTask(name, input) &&
       operand !== undefined &&
-      this.canFinishPreview(operand, preview)
+      this.canFinishPreview_abyssPrivate(operand, preview)
     ) {
       const state = this.ctx_abyssPrivate.session.snapshot();
       const reviewed = { id: state.id, revision: state.proposal.revision };
@@ -499,7 +515,26 @@ class CommandToolOwner {
     }
     return preview;
   }
-  private canFinishRead(): boolean {
+  private async finishLookup_abyssPrivate(
+    input: unknown,
+    preview: unknown,
+    id: string,
+  ): Promise<unknown> {
+    const ctx = this.ctx_abyssPrivate;
+    const handle = record(preview)?.['evidence'];
+    if (typeof handle === 'string' && this.canFinishRead_abyssPrivate()) {
+      const evidence = ctx.references?.identity(handle) ?? handle;
+      if (ctx.evidence?.missingTaskCoordinate(evidence) === true)
+        await this.execute_abyssPrivate('finish', id, () =>
+          this.finishResult_abyssPrivate({
+            state: 'question',
+            blockingIssue: { kind: 'not-found', evidence },
+          }),
+        );
+    }
+    return lookupFeedback(record(input)?.['purpose'], preview, this.inspections_abyssPrivate);
+  }
+  private canFinishRead_abyssPrivate(): boolean {
     const ctx = this.ctx_abyssPrivate;
     return (
       ctx.generationCalls === 1 &&
@@ -509,8 +544,8 @@ class CommandToolOwner {
       ctx.errors.size === 0
     );
   }
-  private canFinishPreview(operand: object, result: unknown): boolean {
-    if (!this.canFinishRead()) return false;
+  private canFinishPreview_abyssPrivate(operand: object, result: unknown): boolean {
+    if (!this.canFinishRead_abyssPrivate()) return false;
     const ctx = this.ctx_abyssPrivate;
     const current = ctx.session.snapshot();
     if (
@@ -523,15 +558,20 @@ class CommandToolOwner {
       (record(result)?.['cancelledDraft'] === true && current.proposal.changes.length === 0)
     );
   }
-  private admit_abyssPrivate(name: string, id: string): boolean {
+  private admit_abyssPrivate(name: string, id: string, input: unknown): string | undefined {
     this.ctx_abyssPrivate.account?.(id);
     if (name === 'expand' && this.finished_abyssPrivate) {
       this.ctx_abyssPrivate.deferred.add(id);
-      return false;
+      return 'Turn already finished.';
     }
     if (this.ctx_abyssPrivate.deferred.has(id))
       throw new CommandFailure('CONTROL_REPAIR', required(this.ctx_abyssPrivate.feedback.get(id)));
-    return true;
+    const ctx = this.ctx_abyssPrivate;
+    if (!ctx.done && ctx.evidence?.missingTaskCoordinate() === true && preparesTask(name, input)) {
+      ctx.deferred.add(id);
+      return 'Task preparation deferred. Retry the exact path and line with its original filters. If they cannot be verified, retain other unfinished work.';
+    }
+    return undefined;
   }
   private acceptFinish_abyssPrivate(name: string, result: unknown): void {
     if (name !== 'finish' || record(result)?.['finished'] !== true) return;
@@ -586,7 +626,15 @@ class CommandToolOwner {
         this.execute_abyssPrivate('expand', toolCallId, async () => {
           for (const capability of capabilities)
             this.ctx_abyssPrivate.capabilities?.add(capability);
-          const enabled = { capabilities: [...(this.ctx_abyssPrivate.capabilities ?? [])] };
+          const available = this.ctx_abyssPrivate.capabilities;
+          const enabled = {
+            capabilities: [...(available ?? [])],
+            ...(available?.has('read') === true &&
+            available.has('project') &&
+            (capabilities.includes('project') || capabilities.includes('read'))
+              ? { projectList: { tool: 'read', arguments: { input: { kind: 'projects' } } } }
+              : {}),
+          };
           if (!capabilities.includes('status')) return enabled;
           const catalog = await this.readPublic_abyssPrivate(() =>
             this.ctx_abyssPrivate.api.tasks.statuses(),
@@ -963,31 +1011,36 @@ class CommandToolOwner {
         ),
       ),
       execute: (input, { toolCallId }) =>
-        this.execute_abyssPrivate('interpret', toolCallId, () => this.interpretIntent(input)),
+        this.execute_abyssPrivate('interpret', toolCallId, () =>
+          this.interpretIntent_abyssPrivate(input),
+        ),
     });
   }
-  private async interpretIntent(input: z.infer<typeof intentSchema>): Promise<unknown> {
+  private async interpretIntent_abyssPrivate(
+    input: z.infer<typeof intentSchema>,
+  ): Promise<unknown> {
     if (this.ctx_abyssPrivate.interpreted)
       throw new CommandFailure(
         'PHASE',
         'Authority is sealed for this turn; later control cannot grant saving, research or lifecycle permission.',
       );
-    this.requireControlRepair(input);
+    this.requireControlRepair_abyssPrivate(input);
     assertCurrentScopeIndexes(input, this.ctx_abyssPrivate.basis.proposal);
     if (!recoveryControlAvailable(input.intent, this.ctx_abyssPrivate.session.snapshot()))
       throw new CommandFailure(
         'RECOVERY_STATE',
         'This session no longer needs that recovery action. Continue from the displayed proposal.',
       );
-    this.requireTransition(input);
-    await this.admitWrite(input);
+    this.requireTransition_abyssPrivate(input);
+    await this.admitWrite_abyssPrivate(input);
     this.ctx_abyssPrivate.interpreted = true;
     delete this.ctx_abyssPrivate.controlRepair;
     const confirmation = await this.controlConfirmation_abyssPrivate(input);
     if (confirmation !== undefined) return confirmation;
-    const lifecycle = await this.lifecycleIntent(input);
+    const lifecycle = await this.lifecycleIntent_abyssPrivate(input);
     if (lifecycle !== undefined) return lifecycle;
-    if (!(await this.continueTransition(input))) return { resolved: false, continuation: false };
+    if (!(await this.continueTransition_abyssPrivate(input)))
+      return { resolved: false, continuation: false };
     const transition = this.pendingTransition_abyssPrivate();
     if (transition !== undefined) return transition;
     if (input.intent === 'save-then-plan') {
@@ -1006,14 +1059,14 @@ class CommandToolOwner {
     this.ctx_abyssPrivate.session.answer();
     return { intent: input.intent, preview: !this.ctx_abyssPrivate.immediate };
   }
-  private async admitWrite(control: z.infer<typeof intentSchema>): Promise<void> {
+  private async admitWrite_abyssPrivate(control: z.infer<typeof intentSchema>): Promise<void> {
     const ctx = this.ctx_abyssPrivate;
     try {
       const grant = await authorizeCommandWrite(control, {
         userMessage: ctx.userMessage,
         basis: ctx.basis,
         signal: ctx.signal,
-        review: (request) => this.reviewWriteRequest(request),
+        review: (request) => this.reviewWriteRequest_abyssPrivate(request),
       });
       this.checkFinishBasis_abyssPrivate();
       this.writeGrant_abyssPrivate = grant;
@@ -1022,7 +1075,7 @@ class CommandToolOwner {
       throw cause;
     }
   }
-  private async reviewWriteRequest(request: WriteReview): Promise<WriteDecision> {
+  private async reviewWriteRequest_abyssPrivate(request: WriteReview): Promise<WriteDecision> {
     if (this.writeDenied_abyssPrivate)
       throw new CommandFailure(
         'WRITE_DENIED',
@@ -1057,7 +1110,7 @@ class CommandToolOwner {
     if (cause.code === 'WRITE_SCOPE') this.scopeLimit_abyssPrivate ??= 'subset';
     else this.writeDenied_abyssPrivate = true;
   }
-  private requireControlRepair(input: z.infer<typeof intentSchema>): void {
+  private requireControlRepair_abyssPrivate(input: z.infer<typeof intentSchema>): void {
     const scoped = 'scope' in input && input.scope !== undefined;
     const repair = (this.ctx_abyssPrivate.controlRepair ??= { intent: input.intent, scoped });
     if (repair.intent === undefined) {
@@ -1078,7 +1131,7 @@ class CommandToolOwner {
     );
   }
   private controlConfirmation_abyssPrivate(input: z.infer<typeof intentSchema>): Promise<unknown> {
-    return this.confirmationIntent(
+    return this.confirmationIntent_abyssPrivate(
       input.intent,
       'transitionDisposition' in input && input.transitionDisposition !== undefined,
       'scope' in input ? input.scope : undefined,
@@ -1099,7 +1152,9 @@ class CommandToolOwner {
     this.ctx_abyssPrivate.session.question(commandMessage(draftDispositionMessage));
     return { needsDisposition: true };
   }
-  private async continueTransition(input: z.infer<typeof intentSchema>): Promise<boolean> {
+  private async continueTransition_abyssPrivate(
+    input: z.infer<typeof intentSchema>,
+  ): Promise<boolean> {
     if (
       input.intent !== 'plan' ||
       !('transitionDisposition' in input) ||
@@ -1113,7 +1168,7 @@ class CommandToolOwner {
     if (!resolved) this.ctx_abyssPrivate.done = true;
     return resolved;
   }
-  private requireTransition(input: z.infer<typeof intentSchema>): void {
+  private requireTransition_abyssPrivate(input: z.infer<typeof intentSchema>): void {
     if (
       (input.intent === 'resolve-transition' ||
         ('transitionDisposition' in input && input.transitionDisposition !== undefined)) &&
@@ -1124,7 +1179,7 @@ class CommandToolOwner {
         'No transition is pending. Use plan to find, select or refine the requested entity; do not invent a disposition question.',
       );
   }
-  private async confirmationIntent(
+  private async confirmationIntent_abyssPrivate(
     intent: z.infer<typeof intentSchema>['intent'],
     hasDisposition: boolean,
     scope?: Extract<z.infer<typeof intentSchema>, { intent: 'confirm' }>['scope'],
@@ -1134,7 +1189,7 @@ class CommandToolOwner {
       this.ctx_abyssPrivate.session.question(commandMessage(changedProposalMessage));
       return { needsReview: true };
     }
-    if (this.confirmsNow(intent, scope !== undefined)) {
+    if (this.confirmsNow_abyssPrivate(intent, scope !== undefined)) {
       this.ctx_abyssPrivate.done = true;
       const { basis, session, signal } = this.ctx_abyssPrivate;
       const confirmed =
@@ -1151,7 +1206,10 @@ class CommandToolOwner {
     }
     return undefined;
   }
-  private confirmsNow(intent: z.infer<typeof intentSchema>['intent'], scoped: boolean): boolean {
+  private confirmsNow_abyssPrivate(
+    intent: z.infer<typeof intentSchema>['intent'],
+    scoped: boolean,
+  ): boolean {
     return (
       intent === 'confirm' ||
       (intent === 'immediate' &&
@@ -1173,7 +1231,7 @@ class CommandToolOwner {
     } else if (basis.proposal.changes.length === 0 && isEmptyLiveProposal(current))
       session.status('ready', commandMessage('There are no changes to save.'));
   }
-  private voiceIntent(
+  private voiceIntent_abyssPrivate(
     input: Extract<z.infer<typeof intentSchema>, { intent: 'voice-mode' }>,
   ): unknown {
     this.ctx_abyssPrivate.done = true;
@@ -1192,8 +1250,10 @@ class CommandToolOwner {
     );
     return { voiceMode: input.voiceMode };
   }
-  private async lifecycleIntent(input: z.infer<typeof intentSchema>): Promise<unknown> {
-    if (input.intent === 'voice-mode') return this.voiceIntent(input);
+  private async lifecycleIntent_abyssPrivate(
+    input: z.infer<typeof intentSchema>,
+  ): Promise<unknown> {
+    if (input.intent === 'voice-mode') return this.voiceIntent_abyssPrivate(input);
     if (input.intent === 'acknowledge-uncertainty') {
       this.ctx_abyssPrivate.done = true;
       return {
@@ -1242,19 +1302,21 @@ class CommandToolOwner {
       description: 'Find saved tasks and follow cursors; notes and projects need their read tools.',
       inputSchema: findSchema,
       execute: (input, { toolCallId }) =>
-        this.execute_abyssPrivate('read', toolCallId, () => this.lookupTask(input)),
+        this.execute_abyssPrivate('read', toolCallId, () => this.lookupTask_abyssPrivate(input)),
     });
   }
-  private async lookupTask(input: FindRequest): Promise<unknown> {
+  private async lookupTask_abyssPrivate(input: FindRequest): Promise<unknown> {
     const { purpose, retryOf, showExact, taskId, sourceLine, ...query } = input;
     const ctx = this.ctx_abyssPrivate;
     ctx.session.status('searching', commandMessage('Looking up the requested content…'));
-    const result = await this.readTasks_abyssPrivate({ ...query, kind: 'tasks' });
+    const result = await this.readTasks_abyssPrivate({ ...query, kind: 'tasks' }, sourceLine);
     const candidate = soleTask(result, query.cursor, input);
     const evidence = required(ctx.evidence);
-    if (retryOf !== undefined) this.correctLookup(result, retryOf, purpose);
+    const owners = sourceRows(result.items, query.path, sourceLine);
+    if (retryOf !== undefined)
+      this.correctLookup_abyssPrivate({ ...result, items: owners }, retryOf, purpose);
     if (purpose === 'change' || purpose === 'remove')
-      evidence.expectTaskChange(result.evidence, purpose, candidate, result.items);
+      evidence.expectTaskChange(result.evidence, purpose, candidate, owners);
     if (candidate === undefined) {
       if (
         sourceLine === undefined &&
@@ -1264,7 +1326,7 @@ class CommandToolOwner {
           next: 'One title exactly matches this query; the other titles matched approximately. If the user named that exact title, repeat this find with the same filters and purpose and showExact:true. Check the requested parent before editing.',
           ...result,
         };
-      return this.lookupCandidates(result, query.cursor, retryOf);
+      return this.lookupCandidates_abyssPrivate(result, query.cursor, retryOf, sourceLine);
     }
     if (
       sourceLine === undefined &&
@@ -1274,9 +1336,9 @@ class CommandToolOwner {
         candidate: { kind: 'task', target: candidate.target, revision: candidate.revision },
         ...result,
       };
-    return this.inspectMatch(candidate, result);
+    return this.inspectMatch_abyssPrivate(candidate, result);
   }
-  private correctLookup(
+  private correctLookup_abyssPrivate(
     result: TaskSearchResult,
     retryOf: string,
     purpose: FindRequest['purpose'],
@@ -1288,7 +1350,19 @@ class CommandToolOwner {
       evidence.correctParentLookup(retryOf, result.evidence, result.items);
     else evidence.retryTaskLookup(retryOf, result.evidence, purpose);
   }
-  private lookupCandidates(result: TaskSearchResult, cursor?: string, retryOf?: string): unknown {
+  private lookupCandidates_abyssPrivate(
+    result: TaskSearchResult,
+    cursor?: string,
+    retryOf?: string,
+    sourceLine?: number,
+  ): unknown {
+    if (sourceLine !== undefined)
+      return {
+        ...result,
+        next: wholeSearchPage(result, cursor)
+          ? 'No unique task at this path and line. Retry that coordinate or clarify it; earlier failed operations still need repair.'
+          : 'Page cannot verify a unique coordinate. Restart without cursor: keep the same path and line, original filters and query phrase; add a distinctive word or filter. Otherwise ask with incomplete evidence.',
+      };
     if (!result.complete)
       return {
         next: 'More candidates remain. Follow nextCursor with the same filters and purpose.',
@@ -1319,7 +1393,7 @@ class CommandToolOwner {
         : 'The alternative wording found no task. Ask with blockingIssue.kind=not-found and this evidence.';
     return { next, ...result };
   }
-  private async inspectMatch(
+  private async inspectMatch_abyssPrivate(
     { target, revision }: TaskDtoV1,
     result: TaskSearchResult,
   ): Promise<unknown> {
@@ -1506,6 +1580,7 @@ class CommandToolOwner {
   }
   private async readTasks_abyssPrivate(
     input: Extract<z.infer<typeof readSchema>, { kind: 'tasks' }>,
+    sourceLine?: number,
   ): Promise<TaskSearchResult> {
     const query = { ...omitKind(input), limit: 50 } as SearchTasksV1;
     const filters = { ...query };
@@ -1524,6 +1599,20 @@ class CommandToolOwner {
       result = await this.readPublic_abyssPrivate(() =>
         required(this.ctx_abyssPrivate.api.tasks.search)(query),
       );
+    if (sourceLine !== undefined) {
+      const { query: subject, cursor, ...scope } = query;
+      const matches = sourceRows(result.items, query.path, sourceLine);
+      return {
+        ...result,
+        evidence: required(this.ctx_abyssPrivate.evidence).discovery({
+          entity: 'task',
+          query: subject,
+          scope: { ...scope, sourceLine },
+          complete: wholeSearchPage(result, cursor),
+          count: matches.length,
+        }),
+      };
+    }
     return {
       ...result,
       evidence: this.discoveryEvidence_abyssPrivate('task', query.query, query, result),
@@ -1590,7 +1679,9 @@ class CommandToolOwner {
     }
     return false;
   }
-  private allowTaskRemovals(operations: ReadonlyArray<{ type: string; target?: string }>): void {
+  private allowTaskRemovals_abyssPrivate(
+    operations: ReadonlyArray<{ type: string; target?: string }>,
+  ): void {
     for (const operation of operations) {
       if (operation.type === 'remove' && operation.target !== undefined)
         this.ctx_abyssPrivate.evidence?.allowRemoval(operation.target);
@@ -1629,15 +1720,15 @@ class CommandToolOwner {
         'Advanced: batch, copy or hierarchy/merge. Use change_task for ordinary fields, comments, descriptions, children and removals. Raw edits need each node’s issued target. A plan covers one tree; independent roots need separate edits. Batch up to20 operations on issued nodes in one plan; dependent new children/comments need later calls. Reparent combines intact trees without copy/delete. Copy uses copy-comment/copy-subtree. After the final destination edit: assess-merge, then cleanup only with coverage.',
       inputSchema: taskArgumentsSchema,
       execute: (input, { toolCallId }) =>
-        this.execute_abyssPrivate('task', toolCallId, () => this.prepareTask(input)),
+        this.execute_abyssPrivate('task', toolCallId, () => this.prepareTask_abyssPrivate(input)),
     });
   }
-  private prepareTask({
+  private prepareTask_abyssPrivate({
     input,
     removeAnnotations,
   }: z.infer<typeof taskArgumentsSchema>): Promise<unknown> {
     return this.taskAttempt_abyssPrivate(input.kind, async () => {
-      if (input.kind === 'batch') return this.prepareBatch(input, removeAnnotations);
+      if (input.kind === 'batch') return this.prepareBatch_abyssPrivate(input, removeAnnotations);
       const original = input as PrepareTaskContentV1;
       if (
         (original.kind === 'append' || original.kind === 'refresh') &&
@@ -1654,9 +1745,9 @@ class CommandToolOwner {
           'PLAN_BASIS',
           'Only the current preview can be refined. Prepare historical work again from fresh source reads.',
         );
-      this.checkEditBasis(original);
+      this.checkEditBasis_abyssPrivate(original);
       if (this.cancelDraft_abyssPrivate(original)) return { cancelledDraft: true };
-      if ('operation' in original) this.allowTaskRemovals([original.operation]);
+      if ('operation' in original) this.allowTaskRemovals_abyssPrivate([original.operation]);
       const request = await this.preserveRewrite_abyssPrivate(original, removeAnnotations);
       const plan = await this.readPublic_abyssPrivate(() =>
         required(this.ctx_abyssPrivate.api.tasks.prepare)(request),
@@ -1671,7 +1762,7 @@ class CommandToolOwner {
       return planToolOutput(plan);
     });
   }
-  private checkEditBasis(input: PrepareTaskContentV1): void {
+  private checkEditBasis_abyssPrivate(input: PrepareTaskContentV1): void {
     if (input.kind !== 'edit') return;
     for (const change of this.ctx_abyssPrivate.session.snapshot().proposal.changes) {
       if (change.kind !== 'task' || find(change.plan.after, input.target) === undefined) continue;
@@ -1705,7 +1796,7 @@ class CommandToolOwner {
   ): string {
     return name ?? existing?.name ?? '';
   }
-  private cancelBatch(input: z.infer<typeof batchSchema>): boolean {
+  private cancelBatch_abyssPrivate(input: z.infer<typeof batchSchema>): boolean {
     const only = input.operations.length === 1 ? input.operations[0] : undefined;
     return (
       only?.type === 'remove' &&
@@ -1717,7 +1808,7 @@ class CommandToolOwner {
       })
     );
   }
-  private async prepareBatch(
+  private async prepareBatch_abyssPrivate(
     input: z.infer<typeof batchSchema>,
     removeAnnotations: readonly string[] | undefined,
   ): Promise<unknown> {
@@ -1727,8 +1818,8 @@ class CommandToolOwner {
     );
     if (change?.kind !== 'task' || change.plan.revision !== input.expectedPlanRevision)
       throw new CommandFailure('BATCH_BASIS', 'Use the exact current task proposal for a batch.');
-    if (this.cancelBatch(input)) return { cancelledDraft: true };
-    this.allowTaskRemovals(input.operations);
+    if (this.cancelBatch_abyssPrivate(input)) return { cancelledDraft: true };
+    this.allowTaskRemovals_abyssPrivate(input.operations);
     if (snapshot.proposal.operations + input.operations.length > 100)
       throw new CommandFailure(
         'BUDGET',
@@ -1839,7 +1930,7 @@ class CommandToolOwner {
     });
   }
   private noteRequest_abyssPrivate(input: z.infer<typeof notePrepareSchema>): PrepareNoteV1 {
-    if (input.kind === 'create') return this.createNoteRequest(input);
+    if (input.kind === 'create') return this.createNoteRequest_abyssPrivate(input);
     if (input.kind !== 'edit') return input;
     const existing = this.ctx_abyssPrivate.session
       .snapshot()
@@ -1859,7 +1950,7 @@ class CommandToolOwner {
       operation: input.operation,
     };
   }
-  private createNoteRequest(
+  private createNoteRequest_abyssPrivate(
     input: Extract<z.infer<typeof notePrepareSchema>, { kind: 'create' }>,
   ): PrepareNoteV1 {
     if (input.path !== undefined && input.destination !== undefined)
@@ -1938,7 +2029,7 @@ class CommandToolOwner {
     );
     if (before.revision !== input.expectedRevision)
       throw new CommandFailure('REVISION_CONFLICT', 'The project changed. Read it again.');
-    if (input.kind === 'move-task') return this.moveProjectTask(input, before);
+    if (input.kind === 'move-task') return this.moveProjectTask_abyssPrivate(input, before);
     return this.updateProject_abyssPrivate(input, before);
   }
   private creationStatus_abyssPrivate(
@@ -2003,7 +2094,7 @@ class CommandToolOwner {
         'Omit selection; this unsaved project is already shown. Use proposal to refine it.',
     };
   }
-  private async moveProjectTask(
+  private async moveProjectTask_abyssPrivate(
     input: Extract<z.infer<typeof projectStageSchema>, { kind: 'move-task' }>,
     before: ProjectDtoV1,
   ): Promise<unknown> {
@@ -2081,7 +2172,7 @@ class CommandToolOwner {
     return { before, ...input };
   }
 
-  private linkNote(input: z.infer<typeof linkSchema>): NotePlanV1 {
+  private linkNote_abyssPrivate(input: z.infer<typeof linkSchema>): NotePlanV1 {
     const changes = this.ctx_abyssPrivate.session.snapshot().proposal.changes;
     const note = changes.find((c) => c.kind === 'note' && c.plan.target === input.notePlan);
     if (note?.kind !== 'note' || input.template.split('{{link}}').length !== 2)
@@ -2091,7 +2182,7 @@ class CommandToolOwner {
       );
     return note.plan;
   }
-  private requireUnplannedLink(target: string): void {
+  private requireUnplannedLink_abyssPrivate(target: string): void {
     const overlap = this.ctx_abyssPrivate.session
       .snapshot()
       .proposal.changes.some(
@@ -2106,7 +2197,7 @@ class CommandToolOwner {
         'This task already has a proposal. Use its current plan and revision.',
       );
   }
-  private async linkTask(input: z.infer<typeof linkSchema>): Promise<TaskTreeV1> {
+  private async linkTask_abyssPrivate(input: z.infer<typeof linkSchema>): Promise<TaskTreeV1> {
     if ('taskPlan' in input) {
       const task = this.ctx_abyssPrivate.session
         .snapshot()
@@ -2120,7 +2211,7 @@ class CommandToolOwner {
         );
       return required(find(task.plan.after, input.target));
     }
-    this.requireUnplannedLink(input.target);
+    this.requireUnplannedLink_abyssPrivate(input.target);
     const page = await this.readPublic_abyssPrivate(() =>
       required(this.ctx_abyssPrivate.api.tasks.tree)({ target: input.target, limit: 500 }),
     );
@@ -2143,8 +2234,8 @@ class CommandToolOwner {
       inputSchema: modelSchema(linkSchema),
       execute: (input, { toolCallId }) =>
         this.execute_abyssPrivate('link', toolCallId, async () => {
-          const note = this.linkNote(input);
-          const node = await this.linkTask(input);
+          const note = this.linkNote_abyssPrivate(input);
+          const node = await this.linkTask_abyssPrivate(input);
           const placeholder = buildLinkRaw('wiki', note.path, input.alias, '|');
           const text = input.template.replace('{{link}}', placeholder);
           const operation = linkOperation(input, node, text);
@@ -2177,7 +2268,7 @@ class CommandToolOwner {
             throw new CommandFailure('LINK_SOURCE', 'The task destination is unavailable.');
           const binding = linkBinding(input, node, next, text);
           this.ctx_abyssPrivate.signal.throwIfAborted();
-          if (!('taskPlan' in input)) this.requireUnplannedLink(input.target);
+          if (!('taskPlan' in input)) this.requireUnplannedLink_abyssPrivate(input.target);
           if (this.ctx_abyssPrivate.session.snapshot().proposal.operations + 2 > 100)
             throw new CommandFailure('BUDGET', 'This proposal has too many operations.');
           this.ctx_abyssPrivate.session.stage({ kind: 'task', plan: canonical }, 1, [
@@ -2355,7 +2446,7 @@ class CommandToolOwner {
         'UNRESOLVED',
         'An operation still needs repair. Do not report a completed request.',
       );
-    const question = this.checkFinishEvidence(input);
+    const question = this.checkFinishEvidence_abyssPrivate(input);
     if (
       !(await this.finishSelection_abyssPrivate('selection' in input ? input.selection : undefined))
     )
@@ -2367,7 +2458,7 @@ class CommandToolOwner {
     }
     const result =
       input.state === 'ready' ? this.readyResult_abyssPrivate(input.coverage) : undefined;
-    await this.reveal(input);
+    await this.reveal_abyssPrivate(input);
     this.checkFinishBasis_abyssPrivate(reviewed);
     this.ctx_abyssPrivate.done = true;
     if (input.state === 'question') {
@@ -2377,7 +2468,9 @@ class CommandToolOwner {
     }
     return { finished: await this.publishReady_abyssPrivate(result), result };
   }
-  private checkFinishEvidence(input: z.infer<typeof finishSchema>): string | undefined {
+  private checkFinishEvidence_abyssPrivate(
+    input: z.infer<typeof finishSchema>,
+  ): string | undefined {
     if (input.state === 'question') return this.questionMessage_abyssPrivate(input);
     const ctx = this.ctx_abyssPrivate;
     const evidence = required(ctx.evidence);
@@ -2418,7 +2511,7 @@ class CommandToolOwner {
   }
   private async publishReady_abyssPrivate(result: string | undefined): Promise<boolean> {
     const current = this.ctx_abyssPrivate.session.snapshot();
-    this.checkImmediatePreparation(current);
+    this.checkImmediatePreparation_abyssPrivate(current);
     const grant = this.writeGrant_abyssPrivate;
     if (grant?.effect === 'save-after-edits') {
       const ctx = this.ctx_abyssPrivate;
@@ -2457,7 +2550,7 @@ class CommandToolOwner {
     );
     return finished;
   }
-  private checkImmediatePreparation(current: CommandSessionSnapshot): void {
+  private checkImmediatePreparation_abyssPrivate(current: CommandSessionSnapshot): void {
     if (
       this.ctx_abyssPrivate.immediate &&
       !this.reviewedImmediate_abyssPrivate() &&
@@ -2502,9 +2595,14 @@ class CommandToolOwner {
       incomplete: 'The {entity} search for “{query}” is incomplete. Continue?',
       unsupported: 'The catalog marks “{query}” as unavailable for changes. Choose another field?',
     } as const;
+    const query = fact.query === '' ? '*' : fact.query;
+    const { path, sourceLine } = fact.scope;
     return commandMessage(messages[issue.kind], {
       entity: fact.entity,
-      query: fact.query === '' ? '*' : fact.query,
+      query:
+        typeof path === 'string' && typeof sourceLine === 'number'
+          ? `${query} (${path}:${sourceLine})`
+          : query,
     });
   }
   private focusValue_abyssPrivate(
@@ -2545,7 +2643,7 @@ class CommandToolOwner {
       'The requested selection could not be verified. The earlier focus is retained.',
     );
   }
-  private async reveal(input: z.infer<typeof finishSchema>): Promise<void> {
+  private async reveal_abyssPrivate(input: z.infer<typeof finishSchema>): Promise<void> {
     if (input.state !== 'ready') return;
     if (input.presentation === 'cumulative')
       this.ctx_abyssPrivate.session.showChanges(this.ctx_abyssPrivate.signal);
