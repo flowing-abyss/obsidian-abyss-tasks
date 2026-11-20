@@ -439,17 +439,15 @@ function repairLimit(ctx: CommandToolContext): CommandFailure {
   );
 }
 export class CommandAgent implements CommandAgentPort {
-  private turnSequence_abyssPrivate = 0;
-  constructor(private readonly options_abyssPrivate: CommandAgentOptions) {}
+  private turnSequence = 0;
+  constructor(private readonly options: CommandAgentOptions) {}
   private model(
     ctx: CommandToolContext,
     signal: AbortSignal,
   ): ReturnType<typeof wrapLanguageModel> {
     let requestedAction = false;
     return wrapLanguageModel({
-      model: this.options_abyssPrivate.connections.model(
-        parseAgentSettings(this.options_abyssPrivate.settings()),
-      ),
+      model: this.options.connections.model(parseAgentSettings(this.options.settings())),
       middleware: {
         wrapGenerate: async ({ model: underlying, params }) => {
           const state = ctx.session.snapshot();
@@ -499,18 +497,17 @@ export class CommandAgent implements CommandAgentPort {
     start: number,
   ): CommandToolContext {
     const repairs = new Set<string>();
-    const turn = (++this.turnSequence_abyssPrivate).toString(36);
+    const turn = (++this.turnSequence).toString(36);
     const references = new CommandReferenceBook(turn);
     let repairsUsed = 0;
     const context: CommandToolContext = {
       userMessage: input.text,
-      temporalContext:
-        this.options_abyssPrivate.temporalContext?.() ?? new Date(start).toISOString(),
-      api: this.options_abyssPrivate.api,
-      session: this.options_abyssPrivate.session,
+      temporalContext: this.options.temporalContext?.() ?? new Date(start).toISOString(),
+      api: this.options.api,
+      session: this.options.session,
       basis: input.session,
       signal: input.signal,
-      now: this.options_abyssPrivate.now,
+      now: this.options.now,
       turnStart: start,
       deadline: start + 120000,
       researchMode: false,
@@ -528,9 +525,7 @@ export class CommandAgent implements CommandAgentPort {
       references,
       evidence: new CommandEvidence(),
       capabilities: new Set(['find', 'inspect', 'create_task', 'change_task']),
-      ...(this.options_abyssPrivate.research === undefined
-        ? {}
-        : { research: this.options_abyssPrivate.research }),
+      ...(this.options.research === undefined ? {} : { research: this.options.research }),
       repair: (call, reason) => {
         // Persist codes only: arguments, source text, credentials and provider bodies stay out.
         if (reason !== undefined && /^[a-z_]{1,32}: [A-Z_]{1,48}$/u.test(reason))
@@ -544,7 +539,7 @@ export class CommandAgent implements CommandAgentPort {
     };
     return context;
   }
-  private modelContext_abyssPrivate(snapshot: CommandSessionSnapshot): unknown {
+  private modelContext(snapshot: CommandSessionSnapshot): unknown {
     const actual = new Map(snapshot.actual.map((tree) => [tree.target, tree]));
     const pages = new Map(snapshot.entities.tasks.map((page) => [page.tree.target, page]));
     for (const target of actual.keys()) pages.delete(target);
@@ -585,7 +580,7 @@ export class CommandAgent implements CommandAgentPort {
       references: commandReferences(snapshot),
     };
   }
-  private activeTools_abyssPrivate(ctx: CommandToolContext): string[] {
+  private activeTools(ctx: CommandToolContext): string[] {
     const allowed = [...(ctx.capabilities ?? [])].filter(
       (name) => name !== 'research' || ctx.researchAdmission !== 'denied',
     );
@@ -601,28 +596,25 @@ export class CommandAgent implements CommandAgentPort {
       'finish',
       ...allowed.filter(
         (name) =>
-          !this.options_abyssPrivate.session.readOnly() ||
+          !this.options.session.readOnly() ||
           ['find', 'inspect', 'read', 'research'].includes(name),
       ),
     ];
   }
   async run(input: Parameters<CommandAgentPort['run']>[0]): Promise<void> {
-    const start = this.options_abyssPrivate.now();
+    const start = this.options.now();
     const ctx = this.context(input, start);
     const model = this.model(ctx, input.signal);
-    configureResearchAdmission(this.options_abyssPrivate, ctx, input, model);
+    configureResearchAdmission(this.options, ctx, input, model);
     ctx.reviewWrite =
-      this.options_abyssPrivate.reviewWrite ??
-      ((request) => reviewCommandWrite(model, request, input.signal));
+      this.options.reviewWrite ?? ((request) => reviewCommandWrite(model, request, input.signal));
     const tools = commandTools(ctx);
-    const policy = await this.options_abyssPrivate.api.tasks
-      .creationPolicy?.()
-      .catch(() => undefined);
+    const policy = await this.options.api.tasks.creationPolicy?.().catch(() => undefined);
     const clock = ctx.temporalContext;
     const instructions = `${commandPrompt}\n\ntemporalContext is the vault clock for this request: ${clock}. Resolve all relative dates from this local date.`;
     const prompt = JSON.stringify({
       creationPolicy: policy?.ok === true ? policy.value : undefined,
-      visibleSession: ctx.references?.project(this.modelContext_abyssPrivate(input.session)),
+      visibleSession: ctx.references?.project(this.modelContext(input.session)),
       userMessage: input.text,
     });
     if (prompt.length + instructions.length > COMMAND_CONTEXT_CHARACTERS)
@@ -646,11 +638,11 @@ export class CommandAgent implements CommandAgentPort {
         input.signal.throwIfAborted();
         if (ctx.repairExhausted) throw repairLimit(ctx);
         ctx.deadline = start + (ctx.researchMode ? 180000 : 120000);
-        if (this.options_abyssPrivate.now() >= ctx.deadline || ctx.done)
+        if (this.options.now() >= ctx.deadline || ctx.done)
           throw new CommandFailure('TIMEOUT', 'This request stopped. Your draft is retained.');
         return {
           instructions,
-          activeTools: this.activeTools_abyssPrivate(ctx),
+          activeTools: this.activeTools(ctx),
           maxOutputTokens: ctx.researchMode ? 8192 : 4096,
           messages: repairMessages(messages, ctx.feedback),
         };
@@ -677,12 +669,12 @@ export class CommandAgent implements CommandAgentPort {
     });
     input.signal.throwIfAborted();
     if (ctx.repairExhausted) throw repairLimit(ctx);
-    this.requireFinished_abyssPrivate(
+    this.requireFinished(
       ctx,
       result.steps.some((step) => step.content.some((part) => part.type === 'tool-error')),
     );
   }
-  private requireFinished_abyssPrivate(ctx: CommandToolContext, failed: boolean): void {
+  private requireFinished(ctx: CommandToolContext, failed: boolean): void {
     if (ctx.done && ctx.errors.size === 0 && !ctx.pendingOperations.unresolved) return;
     throw new CommandFailure(
       failed ? 'TOOL_ERROR' : 'INCOMPLETE',

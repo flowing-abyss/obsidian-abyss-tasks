@@ -18,11 +18,16 @@ import type {
 } from '../../api';
 import {
   changedNoteSectionReadbackMessage,
+  changedProjectSettingsMessage,
   commandMessage,
   completeWriteReadbackMessage,
   mergeAssessmentReviewMessage,
+  partialWriteReviewMessage,
   projectMoveFocusMessage,
   relatedContentReviewMessage,
+  unavailableWrittenTaskMessage,
+  unidentifiedWrittenTasksMessage,
+  unverifiedWrittenLinkMessage,
 } from './commandMessages';
 import {
   projectMoveWithDescendantFocus,
@@ -173,12 +178,7 @@ class CommandWriteRun {
       } catch {
         // Historical entity evidence remains; an unverified continuation is not current focus.
         this.ctx.focusChanges(new Map([[selection.target, null]]));
-        throw new CommandFailure(
-          'READBACK',
-          commandMessage(
-            'The write settled, but a selected task is unavailable. Review the current result.',
-          ),
-        );
+        throw new CommandFailure('READBACK', commandMessage(unavailableWrittenTaskMessage));
       }
     }
   }
@@ -187,12 +187,7 @@ class CommandWriteRun {
       await this.processChange(change);
     } catch (cause) {
       if (this.notes.size > 0 && this.ctx.proposal.changes.some((entry) => entry.kind === 'link'))
-        throw new CommandFailure(
-          'NOTE_LINK_PARTIAL',
-          commandMessage(
-            'The note was saved; the task link could not be verified. Review the current result.',
-          ),
-        );
+        throw new CommandFailure('NOTE_LINK_PARTIAL', commandMessage(unverifiedWrittenLinkMessage));
       throw cause;
     }
   }
@@ -401,9 +396,7 @@ class CommandWriteRun {
           ? commandMessage('This change was not saved. {detail} Your proposal is retained.', {
               detail: result.error.message,
             })
-          : commandMessage(
-              'The request may be partly saved. Review the actual result before continuing.',
-            ),
+          : commandMessage(partialWriteReviewMessage),
       );
     this.retainCreationReceipt(entry, receipt);
   }
@@ -559,12 +552,7 @@ class CommandWriteRun {
   private async readContent(receipt: TaskContentReceiptV1, change: CommandChange): Promise<void> {
     const correspondence = receipt.contentContinuity.correspondence;
     if (correspondence.state !== 'complete')
-      throw new CommandFailure(
-        'READBACK',
-        commandMessage(
-          'The write finished, but its resulting tasks could not be identified. Review the note.',
-        ),
-      );
+      throw new CommandFailure('READBACK', commandMessage(unidentifiedWrittenTasksMessage));
     this.accepted.set(
       receipt.plan,
       new Map(
@@ -734,12 +722,7 @@ class CommandWriteRun {
       try {
         const schema = await this.read(() => required(this.ctx.api.projects).schema());
         if (!sameCommandProjectSchema(change.schema, schema))
-          throw new CommandFailure(
-            'PROJECT_SCHEMA',
-            commandMessage(
-              'Project settings changed. Review the retained requested values before saving.',
-            ),
-          );
+          throw new CommandFailure('PROJECT_SCHEMA', commandMessage(changedProjectSettingsMessage));
         validateCommandProject(schema, change);
       } catch (cause) {
         return async () => ({

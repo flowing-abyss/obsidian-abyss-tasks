@@ -10915,45 +10915,6 @@ function projectApiFixture(api: TasksApiV1): TasksApiV1 {
     } as unknown as NonNullable<TasksApiV1['projects']>,
   };
 }
-it('supplies the executable project lookup when expanding the project and read tools', async () => {
-  const source = '- [ ] Vendor call #keep\n';
-  const h = await setup({ 'Launch.md': source, 'Archive.md': source }, {}, projectApiFixture);
-  h.script(
-    () => call('expand', { capabilities: ['project', 'read'] }),
-    () => {
-      const hint = latestToolValue(h, 'expand')['projectList'];
-      expect(hint).toEqual({ tool: 'read', arguments: { input: { kind: 'projects' } } });
-      const args = expectDefined(record(record(hint)?.['arguments']));
-      return call('read', args['input']);
-    },
-    () => {
-      const rows = latestToolValue(h, 'read')['items'];
-      const project: unknown = Array.isArray(rows)
-        ? rows.find((row) => record(row)?.['name'] === 'Launch')
-        : undefined;
-      return call('find', {
-        path: expectDefined(record(project)?.['path']),
-        query: 'Vendor call',
-        purpose: 'show-only',
-      });
-    },
-    () => call('finish', { state: 'ready', selection: [latestToolValue(h, 'find')['selection']] }),
-  );
-  await h.session.submit('Select Vendor call in the Launch project.');
-  const snapshot = h.session.snapshot();
-  expect(snapshot.status.kind).toBe('ready');
-  expect(snapshot.focus).toMatchObject([{ kind: 'task' }]);
-  expect(snapshot.proposal.changes).toEqual([]);
-  expect(
-    snapshot.entities.tasks.some(
-      (page) =>
-        page.tree.source?.path === 'Launch.md' && page.tree.target === snapshot.focus[0]?.target,
-    ),
-  ).toBe(true);
-  expect(await h.read('Launch.md')).toBe(source);
-  expect(await h.read('Archive.md')).toBe(source);
-});
-
 it('keeps a misaddressed catalog call from completing a requested project edit', async () => {
   configureCommandLocale('ru');
   try {

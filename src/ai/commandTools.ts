@@ -626,15 +626,7 @@ class CommandToolOwner {
         this.execute_abyssPrivate('expand', toolCallId, async () => {
           for (const capability of capabilities)
             this.ctx_abyssPrivate.capabilities?.add(capability);
-          const available = this.ctx_abyssPrivate.capabilities;
-          const enabled = {
-            capabilities: [...(available ?? [])],
-            ...(available?.has('read') === true &&
-            available.has('project') &&
-            (capabilities.includes('project') || capabilities.includes('read'))
-              ? { projectList: { tool: 'read', arguments: { input: { kind: 'projects' } } } }
-              : {}),
-          };
+          const enabled = { capabilities: [...(this.ctx_abyssPrivate.capabilities ?? [])] };
           if (!capabilities.includes('status')) return enabled;
           const catalog = await this.readPublic_abyssPrivate(() =>
             this.ctx_abyssPrivate.api.tasks.statuses(),

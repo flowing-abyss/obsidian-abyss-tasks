@@ -1,3 +1,13 @@
+export const partialWriteReviewMessage =
+  'The request may be partly saved. Review the actual result before continuing.';
+export const changedProjectSettingsMessage =
+  'Project settings changed. Review the retained requested values before saving.';
+export const unavailableWrittenTaskMessage =
+  'The write settled, but a selected task is unavailable. Review the current result.';
+export const unverifiedWrittenLinkMessage =
+  'The note was saved; the task link could not be verified. Review the current result.';
+export const unidentifiedWrittenTasksMessage =
+  'The write finished, but its resulting tasks could not be identified. Review the note.';
 export const pendingProjectConflictMessage =
   'The project changed while its earlier edits were pending. Review them before continuing.';
 export const projectMoveFocusMessage =
@@ -269,9 +279,9 @@ const russian = {
     'Остановлено после последней принятой записи. Проверьте результат перед продолжением.',
   [completeWriteReadbackMessage]:
     'Запись завершилась, но полный сохранённый результат не удалось проверить. Проверьте текущий источник перед продолжением.',
-  'The write settled, but a selected task is unavailable. Review the current result.':
+  [unavailableWrittenTaskMessage]:
     'Запись завершена, но выбранная задача недоступна. Проверьте текущий результат.',
-  'The note was saved; the task link could not be verified. Review the current result.':
+  [unverifiedWrittenLinkMessage]:
     'Заметка сохранена; ссылку в задаче проверить не удалось. Проверьте текущий результат.',
   [relatedContentReviewMessage]:
     'Связанное содержимое изменилось после предыдущей записи. Проверьте оставшееся предложение перед сохранением.',
@@ -292,7 +302,7 @@ const russian = {
     'Результат записи неизвестен. Проверьте заметку перед повторной попыткой.',
   'The write receipt could not be verified. Do not repeat the write.':
     'Не удалось проверить подтверждение записи. Не повторяйте запись.',
-  'The request may be partly saved. Review the actual result before continuing.':
+  [partialWriteReviewMessage]:
     'Запрос мог сохраниться частично. Проверьте результат перед продолжением.',
   'The project write finished without a verified result.':
     'Запись проекта завершена без проверенного результата.',
@@ -308,7 +318,7 @@ const russian = {
     'Заметка записана, но проверить изменённый раздел не удалось. Прочитайте текущую заметку перед продолжением.',
   'The note changed before its edited section could be verified.':
     'Заметка изменилась до проверки отредактированного раздела.',
-  'The write finished, but its resulting tasks could not be identified. Review the note.':
+  [unidentifiedWrittenTasksMessage]:
     'Запись завершена, но определить полученные задачи не удалось. Проверьте заметку.',
   'The selected task changed before it could be verified.':
     'Выбранная задача изменилась до завершения проверки.',
@@ -320,7 +330,7 @@ const russian = {
     'Задача изменилась до проверки текущего дерева.',
   'The task ancestry could not be verified within its limit.':
     'Не удалось проверить цепочку родителей задачи в пределах лимита.',
-  'Project settings changed. Review the retained requested values before saving.':
+  [changedProjectSettingsMessage]:
     'Настройки проекта изменились. Проверьте сохранённые запрошенные значения перед записью.',
   'Project settings could not be checked.': 'Не удалось проверить настройки проекта.',
   'The saved task has no exact correspondence. Review its status separately.':
