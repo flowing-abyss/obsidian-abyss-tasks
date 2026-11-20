@@ -283,8 +283,9 @@ it('offers an issued display retry only for the single saved version being selec
   const original = evidence.discovery(query);
   evidence.expectTaskChange(original, 'change', row, [row]);
   const references = { issuedFindEvidence: () => ['@1:q7'], issuedTaskEdit: () => '@1:b1' };
-  const check = (displayed: (typeof row)[]) => () =>
+  const check = (displayed: Array<typeof row>) => () => {
     evidence.checkTaskChanges(displayed, references);
+  };
   expect(check([row])).toThrow(/purpose:"show-only".*retryOf:"@1:q7"/u);
   for (const displayed of [
     [],

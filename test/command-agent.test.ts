@@ -6728,7 +6728,9 @@ it('keeps an outstanding research edit actionable when finish selects the saved 
   );
   await h.session.submit('Research the source and add the requested description to Existing.');
   const feedback = JSON.stringify(
-    h.model.doGenerateCalls[4]?.prompt.filter((m) => m.role === 'tool').at(-1),
+    expectDefined(h.model.doGenerateCalls[4])
+      .prompt.filter((message) => message.role === 'tool')
+      .slice(-1),
   );
   expect(feedback).toContain('Pending: change_task');
   expect(feedback).not.toContain('show-only');

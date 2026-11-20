@@ -381,7 +381,7 @@ export class CommandEvidence {
     displayed: readonly TaskVersion[] = [],
     references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence' | 'issuedTaskEdit'>>,
     current?: unknown,
-    allowDisplayRetry = true,
+    allowDisplayRetry?: boolean,
   ): void {
     const corrected = this.correctedRoots(displayed);
     this.checkUnresolvedLookups(corrected);
@@ -404,13 +404,34 @@ export class CommandEvidence {
         continue;
       throw this.pendingChangeFailure(
         versionKey({ target, revision: change.revision }),
-        allowDisplayRetry && this.taskChanges.size === 1 && displayed.length === 1
-          ? displayed[0]
-          : undefined,
+        this.displayRetrySubject(displayed, allowDisplayRetry),
         references,
         current,
       );
     }
+  }
+  private displayRetrySubject(
+    displayed: readonly TaskVersion[],
+    allowed: boolean | undefined,
+  ): TaskVersion | undefined {
+    return allowed !== false && this.taskChanges.size === 1 && displayed.length === 1
+      ? displayed[0]
+      : undefined;
+  }
+  private currentChangeLookup(
+    root: string,
+    references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence'>>,
+  ): { lookup: CommandDiscovery; retryOf: string } | undefined {
+    const id = this.changeLookups.get(root);
+    if (id === undefined) return undefined;
+    const lookup = this.discoveries_abyssPrivate.get(id);
+    const retryOf = references?.issuedFindEvidence?.([id])[0];
+    return retryOf !== undefined &&
+      lookup?.complete === true &&
+      lookup.count === 1 &&
+      this.latest.get(this.queryKey_abyssPrivate(lookup)) === lookup
+      ? { lookup, retryOf }
+      : undefined;
   }
   private pendingChangeFailure(
     root: string,
@@ -418,16 +439,10 @@ export class CommandEvidence {
     references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence' | 'issuedTaskEdit'>>,
     current?: unknown,
   ): CommandFailure {
-    const id = this.changeLookups.get(root);
-    const lookup = id === undefined ? undefined : this.discoveries_abyssPrivate.get(id);
-    const retryOf = id === undefined ? undefined : references?.issuedFindEvidence?.([id])[0];
     let message = this.pendingTaskChangeMessage(root, references, current);
-    if (
-      retryOf !== undefined &&
-      lookup?.complete === true &&
-      lookup.count === 1 &&
-      this.latest.get(this.queryKey_abyssPrivate(lookup)) === lookup
-    ) {
+    const correction = this.currentChangeLookup(root, references);
+    if (correction !== undefined) {
+      const { lookup, retryOf } = correction;
       if (this.preparedDescendant(root)) {
         const scope = { ...lookup.scope };
         Reflect.deleteProperty(scope, 'limit');
