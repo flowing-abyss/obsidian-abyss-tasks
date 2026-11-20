@@ -402,15 +402,15 @@ export class CommandEvidence {
         corrected.has(versionKey({ target, revision: change.revision }))
       )
         continue;
-      throw this.pendingChangeFailure(
+      throw this.pendingChangeFailure_abyssPrivate(
         versionKey({ target, revision: change.revision }),
-        this.displayRetrySubject(displayed, allowDisplayRetry),
+        this.displayRetrySubject_abyssPrivate(displayed, allowDisplayRetry),
         references,
         current,
       );
     }
   }
-  private displayRetrySubject(
+  private displayRetrySubject_abyssPrivate(
     displayed: readonly TaskVersion[],
     allowed: boolean | undefined,
   ): TaskVersion | undefined {
@@ -418,7 +418,7 @@ export class CommandEvidence {
       ? displayed[0]
       : undefined;
   }
-  private currentChangeLookup(
+  private currentChangeLookup_abyssPrivate(
     root: string,
     references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence'>>,
   ): { lookup: CommandDiscovery; retryOf: string } | undefined {
@@ -433,14 +433,14 @@ export class CommandEvidence {
       ? { lookup, retryOf }
       : undefined;
   }
-  private pendingChangeFailure(
+  private pendingChangeFailure_abyssPrivate(
     root: string,
     selected: TaskVersion | undefined,
     references?: Partial<Pick<CommandReferenceBook, 'issuedFindEvidence' | 'issuedTaskEdit'>>,
     current?: unknown,
   ): CommandFailure {
-    let message = this.pendingTaskChangeMessage(root, references, current);
-    const correction = this.currentChangeLookup(root, references);
+    let message = this.pendingTaskChangeMessage_abyssPrivate(root, references, current);
+    const correction = this.currentChangeLookup_abyssPrivate(root, references);
     if (correction !== undefined) {
       const { lookup, retryOf } = correction;
       if (this.preparedDescendant(root)) {
@@ -454,7 +454,7 @@ export class CommandEvidence {
     }
     return new CommandFailure('PENDING_TASK_CHANGE', message);
   }
-  private pendingTaskChangeMessage(
+  private pendingTaskChangeMessage_abyssPrivate(
     root: string,
     references?: Partial<Pick<CommandReferenceBook, 'issuedTaskEdit'>>,
     current?: unknown,
