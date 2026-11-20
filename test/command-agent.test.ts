@@ -801,6 +801,7 @@ it('advertises first-call confirmation only for a reviewed proposal and distingu
   expect(review.description).toContain('interpret({intent:"confirm",approval:userMessage}) first');
   expect(review.description).toContain('request to revise');
   expect(review.description).toContain('exact selection for partial approval');
+  expect(review.description).toContain('Naming its task or file can identify the full proposal');
   expect(review.description).toContain('leave every other edit pending');
   expect(h.session.snapshot().journal).toEqual([]);
   expect(await h.read('a.md')).toBe(source);
