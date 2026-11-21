@@ -3093,6 +3093,7 @@ describe('RightPanel popovers', () => {
     'expands the tag editor away from preceding chips in %s layout',
     async (direction) => {
       const { panel, state, el } = await makePanel();
+      activeDocument.body.append(el);
       el.style.direction = direction;
       state.set('taskStack', [task({ title: 'Directional tags' })]);
       const trigger = expectDefined(el.querySelector<HTMLElement>('[aria-label="Add tag"]'));
@@ -3115,6 +3116,7 @@ describe('RightPanel popovers', () => {
       expect(width).toBe(100);
       expect(direction === 'rtl' ? left + width : left).toBe(direction === 'rtl' ? 250 : 200);
       panel.destroy();
+      el.remove();
     },
   );
 

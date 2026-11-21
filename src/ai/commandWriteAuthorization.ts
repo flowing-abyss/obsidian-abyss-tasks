@@ -1,5 +1,5 @@
 import { generateText, tool, type LanguageModel } from 'ai';
-import { z } from 'zod';
+import * as z from 'zod';
 import { modelToolSchema } from './commandModelSchema';
 import type { intentSchema } from './commandSchemas';
 import { CommandFailure, type CommandSessionSnapshot } from './commandTypes';

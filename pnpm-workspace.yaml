@@ -6,18 +6,11 @@ minimumReleaseAgeExclude: []
 blockExoticSubdeps: true
 saveExact: true
 strictPeerDependencies: true
-peerDependencyRules:
-  allowedVersions:
-    'eslint-plugin-obsidianmd@0.4.2>obsidian': '1.14.4'
 allowedDeprecatedVersions:
   eslint: '9.39.5'
 
 audit:
   ignore:
-    # GitHub withdrew this braces advisory on 2026-10-23 as not practically exploitable.
-    # The npm audit feed still reports it; remove this exception when the feed catches up.
-    # https://github.com/advisories/GHSA-vfj7-8cjw-p6xm
-    - GHSA-vfj7-8cjw-p6xm
     # Reviewed 2026-11-04: minimatch is confined to development tooling. Its 8/9/10
     # callers use the default optimizationLevel 1; this DoS requires level >= 2.
     # Version 3 lacks the affected preprocessing. No production dependency uses it.
@@ -32,5 +25,5 @@ allowBuilds:
   esbuild: true
   unrs-resolver: true
 patchedDependencies:
-  '@ai-sdk/provider-utils@5.0.75': patches/@ai-sdk__provider-utils@5.0.75.patch
+  '@ai-sdk/provider-utils@5.0.82': patches/@ai-sdk__provider-utils@5.0.82.patch
   '@openrouter/ai-sdk-provider@3.1.0': patches/@openrouter__ai-sdk-provider@3.1.0.patch

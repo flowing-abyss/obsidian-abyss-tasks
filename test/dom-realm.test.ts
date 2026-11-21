@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isRealmHTMLElement } from '../src/ui/domRealm';
+import { isRealmHTMLElement, isRealmNode } from '../src/ui/domRealm';
 
 describe('isRealmHTMLElement', () => {
   it('rejects null and non-element targets', () => {
@@ -41,4 +41,22 @@ describe('isRealmHTMLElement', () => {
       iframe.remove();
     }
   });
+});
+
+it('checks specific DOM node types in the owning window, including its document', () => {
+  const frame = document.body.createEl('iframe');
+  try {
+    const other = frame.contentDocument;
+    if (other === null) throw new Error('missing iframe document');
+    const svg = other.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const input = other.createElementNS('http://www.w3.org/1999/xhtml', 'input');
+    expect(isRealmNode(svg, 'Element')).toBe(true);
+    expect(isRealmNode(input, 'HTMLInputElement')).toBe(true);
+    expect(isRealmNode(input, 'HTMLTextAreaElement')).toBe(false);
+    expect(isRealmNode(other, 'Node')).toBe(true);
+    expect(isRealmNode(other.createTextNode('x'), 'Element')).toBe(false);
+    expect(isRealmNode(new EventTarget(), 'Node')).toBe(false);
+  } finally {
+    frame.remove();
+  }
 });

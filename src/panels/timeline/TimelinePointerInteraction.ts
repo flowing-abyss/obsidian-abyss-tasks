@@ -9,6 +9,7 @@ import {
   type ProjectTimelineRange,
   type ProjectTimelineWindow,
 } from '../../projects/projectTimelineModel';
+import { isRealmHTMLElement } from '../../ui/domRealm';
 import { isReleasedMousePointer } from '../../ui/pointerRelease';
 
 export interface TimelineRangeSource {
@@ -96,7 +97,7 @@ function pointerPart(element: HTMLElement): TimelinePointerPart | undefined {
 }
 
 function eventTimelineTarget(event: Event): HTMLElement | undefined {
-  if (!(event.target instanceof HTMLElement)) return undefined;
+  if (!isRealmHTMLElement(event.target)) return undefined;
   const nestedControl = event.target.closest(NESTED_CONTROL_SELECTOR);
   return nestedControl !== null && !nestedControl.hasAttribute('data-timeline-part')
     ? undefined

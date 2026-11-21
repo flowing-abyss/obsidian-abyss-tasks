@@ -1,5 +1,5 @@
 import { tool, type Tool, type ToolSet } from 'ai';
-import { z } from 'zod';
+import * as z from 'zod';
 import type {
   ApiResultV1,
   ContentPlanV1,

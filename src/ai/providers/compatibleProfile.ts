@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import type { NativeProviderTransport } from './NativeProviderTransport';
 import type { ProviderSecrets } from './ProviderSecrets';
 import { ProviderFailure } from './providerFailure';

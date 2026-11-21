@@ -3,6 +3,7 @@ import { PRIORITY_LEVELS } from '../priority';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { SubtaskSnapshot, TaskPriority, TaskSnapshot } from '../tasks';
 import { renderStatusMarker } from './StatusMarker';
+import { isRealmHTMLElement } from './domRealm';
 import { createControlName } from './guardedDomWrites';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
@@ -77,7 +78,7 @@ export function buildStatusSubmenu(
         const dom = (i as unknown as { dom?: HTMLElement }).dom;
         if (dom != null) {
           const iconEl = dom.querySelector('.menu-item-icon');
-          if (iconEl instanceof HTMLElement) {
+          if (isRealmHTMLElement(iconEl)) {
             iconEl.empty();
             renderStatusMarker(iconEl, {
               task: { statusSymbol: def.symbol, priority: 'D' },

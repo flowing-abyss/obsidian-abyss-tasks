@@ -9,6 +9,7 @@ import { projectTableLinkTargetParts } from '../../projects/projectTableLinkTarg
 import { projectStatusDisplayName } from '../../projects/status';
 import type { ProjectStatus } from '../../settings/types';
 import { normalizeTag } from '../../tags/markdownTagRename';
+import { isRealmHTMLElement, isRealmNode } from '../../ui/domRealm';
 import { isImeOwnedEvent } from '../../ui/ime';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import {
@@ -129,7 +130,10 @@ function editorKeyboardNavigation(event: KeyboardEvent): ProjectCellEditorNaviga
   if (event.defaultPrevented) return undefined;
   if (event.key === 'Tab') return event.shiftKey ? 'tab-backward' : 'tab-forward';
   if (event.key !== 'Enter') return undefined;
-  if (event.target instanceof HTMLButtonElement || event.target instanceof HTMLTextAreaElement) {
+  if (
+    isRealmNode(event.target, 'HTMLButtonElement') ||
+    isRealmNode(event.target, 'HTMLTextAreaElement')
+  ) {
     return undefined;
   }
   return 'restore-current';
@@ -708,7 +712,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     this.bindOwner_abyssPrivate();
     const revision = this.ownerRevision_abyssPrivate;
     const next = event.relatedTarget;
-    if (next instanceof Node && this.element.contains(next)) {
+    if (isRealmNode(next, 'Node') && this.element.contains(next)) {
       return;
     }
     if (this.ownedPointerActive_abyssPrivate) {
@@ -718,11 +722,11 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     const finish = (): void => {
       if (this.closed_abyssPrivate || this.ownerRevision_abyssPrivate !== revision) return;
       const active = this.element.ownerDocument.activeElement;
-      if (active instanceof Node && this.element.contains(active)) return;
+      if (this.element.contains(active)) return;
       this.requestCommit_abyssPrivate(
         true,
         'preserve-focus',
-        next instanceof HTMLElement ? next : undefined,
+        isRealmHTMLElement(next) ? next : undefined,
       );
     };
     const ownerWindow = this.element.ownerDocument.defaultView;
@@ -732,11 +736,11 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
 
   private readonly onDocumentPointerDown_abyssPrivate = (event: PointerEvent): void => {
     const target = event.target;
-    if (target instanceof Node && this.element.contains(target)) return;
+    if (isRealmNode(target, 'Node') && this.element.contains(target)) return;
     this.requestCommit_abyssPrivate(
       true,
       'preserve-focus',
-      target instanceof HTMLElement ? target : undefined,
+      isRealmHTMLElement(target) ? target : undefined,
     );
   };
 

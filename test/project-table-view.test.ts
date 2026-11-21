@@ -43,12 +43,10 @@ import {
   freshContainer,
   loadPluginStyles,
 } from './helpers';
-import { useHostTooltips } from './support/hostTooltips';
 import { useProjectTableViewport } from './support/projectTableViewport';
 import { projectTimelineBounds } from './support/projectTimelineGeometry';
 
 useProjectTableViewport();
-useHostTooltips();
 
 beforeEach(() => {
   const original = vi.spyOn(Element.prototype, 'clientHeight', 'get').getMockImplementation();
@@ -7661,11 +7659,6 @@ it('persists lazy Timeline settings and normalized Table columns after their ren
     visible: true,
   });
 });
-
-vi.mock('obsidian', async () => ({
-  ...(await import('obsidian-test-mocks/obsidian')),
-  setTooltip: vi.fn(),
-}));
 
 it('keeps project filters before view switching, shared view options and search', () => {
   const { host } = mount([project({})]);

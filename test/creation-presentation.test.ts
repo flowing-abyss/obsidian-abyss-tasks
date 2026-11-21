@@ -312,7 +312,7 @@ describe('task presentation identity', () => {
 
 describe('CreationPresentationController', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(new Date('2026-08-22T12:00:00Z'));
   });
 

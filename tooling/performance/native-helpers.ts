@@ -47,7 +47,7 @@ export async function frames(): Promise<void> {
 }
 
 export function element<T extends HTMLElement = HTMLElement>(selector: string): T {
-  const value = document.querySelector<T>(selector);
+  const value = activeDocument.querySelector<T>(selector);
   if (value === null) throw new Error(`UI element missing: ${selector}`);
   return value;
 }

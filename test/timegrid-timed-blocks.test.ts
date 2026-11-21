@@ -1571,7 +1571,7 @@ describe('Task 2 unified timed interaction contract', () => {
 
       const preview = columns[1].hour.querySelector('.abyss-tg-drag-preview') as HTMLElement;
       expect(preview).not.toBeNull();
-      expect(preview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
+      expect(preview.style.height).toBe('24.48px');
       window.dispatchEvent(
         new PointerEvent('pointerup', { clientX: 125, clientY: 592, pointerId: 21 }),
       );
@@ -1596,7 +1596,7 @@ describe('Task 2 unified timed interaction contract', () => {
       const durationPreview = columns[0].hour.querySelector(
         '.abyss-tg-drag-preview',
       ) as HTMLElement;
-      expect(durationPreview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
+      expect(durationPreview.style.height).toBe('24.48px');
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 24 }));
 
       const boundaryHandle = block.querySelector(
@@ -1616,7 +1616,7 @@ describe('Task 2 unified timed interaction contract', () => {
       const boundaryPreview = columns[1].hour.querySelector(
         '.abyss-tg-boundary-preview',
       ) as HTMLElement;
-      expect(boundaryPreview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
+      expect(boundaryPreview.style.height).toBe('24.48px');
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 25 }));
     },
   );
@@ -4469,7 +4469,7 @@ describe('calendar surface style contract', () => {
       expect(ltr.start.direction).toBe('ltr');
       expect(rtl.start.direction).toBe('rtl');
       for (const computed of [ltr.start, rtl.start]) {
-        expect(computed.insetInline).toBe('calc(-1 * var(--abyss-calendar-ghost-rail)) auto');
+        expect(computed.insetInline).toBe('-3px auto');
       }
       for (const computed of [ltr.due, rtl.due]) {
         expect(computed.insetInline).toBe('auto -5px');

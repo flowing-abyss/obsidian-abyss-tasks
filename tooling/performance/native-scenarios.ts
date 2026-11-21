@@ -46,7 +46,9 @@ export async function taskTextTyping(input: HTMLInputElement | HTMLTextAreaEleme
       if (value.includes('[[')) {
         const query = value.split('[[')[1] ?? '';
         await waitFor(() => {
-          const titles = [...document.querySelectorAll('.abyss-link-suggest .abyss-suggest-title')];
+          const titles = [
+            ...activeDocument.querySelectorAll('.abyss-link-suggest .abyss-suggest-title'),
+          ];
           return (
             titles.length > 0 &&
             titles.every((title) => title.textContent.trim().length > 0) &&
@@ -379,7 +381,7 @@ export async function searchEditScenario(
 
 async function searchReady(expected?: number): Promise<void> {
   await waitFor(() => {
-    const node = document.querySelector<HTMLElement>('[data-search-phase="complete"]');
+    const node = activeDocument.querySelector<HTMLElement>('[data-search-phase="complete"]');
     return (
       node !== null &&
       (expected === undefined || Number(node.dataset['searchLogicalResults']) === expected)
@@ -392,7 +394,7 @@ export async function panelScenarios(host: Host, measure: Measure): Promise<void
   await measure('panel.first-open', async () => {
     if (!host.commands.executeCommandById('abyss-tasks:open-panel'))
       throw new Error('Open panel command missing');
-    await waitFor(() => document.querySelector('.abyss-rail-btn'), 'panel rail');
+    await waitFor(() => activeDocument.querySelector('.abyss-rail-btn'), 'panel rail');
     await frames();
     return { panels: host.workspace.getLeavesOfType('task-calendar-panel').length };
   });
@@ -422,7 +424,7 @@ export async function panelScenarios(host: Host, measure: Measure): Promise<void
   await measure('ui.inspector', async () => {
     element('.abyss-center .abyss-task-card').click();
     await waitFor(
-      () => document.querySelector('.abyss-right .abyss-right-title-view'),
+      () => activeDocument.querySelector('.abyss-right .abyss-right-title-view'),
       'task inspector',
     );
     await frames();
@@ -443,14 +445,14 @@ export async function calendarScenarios(measure: Measure): Promise<void> {
   ] as const) {
     await measure(`ui.calendar.${id}`, async () => {
       if (id === 'day') await click('.abyss-rail-btn[aria-label="Calendar"]');
-      const button = [...document.querySelectorAll<HTMLElement>('.abyss-cal-view-btn')].find(
+      const button = [...activeDocument.querySelectorAll<HTMLElement>('.abyss-cal-view-btn')].find(
         (b) => b.textContent === label,
       );
       if (button === undefined) throw new Error(`Missing calendar view ${label}`);
       button.click();
       await waitFor(
         () =>
-          [...document.querySelectorAll('.abyss-cal-view-btn.is-active')].some(
+          [...activeDocument.querySelectorAll('.abyss-cal-view-btn.is-active')].some(
             (b) => b.textContent === label,
           ),
         `calendar ${id}`,
@@ -476,7 +478,7 @@ export async function calendarScenarios(measure: Measure): Promise<void> {
 
 async function prepareProfileTasks(): Promise<void> {
   await click('.abyss-rail-btn[aria-label="Tasks"]');
-  const group = [...document.querySelectorAll<HTMLElement>('.abyss-tag-group-header')].find(
+  const group = [...activeDocument.querySelectorAll<HTMLElement>('.abyss-tag-group-header')].find(
     (node) => node.querySelector('.abyss-left-label')?.textContent.toLowerCase() === 'profile',
   );
   if (group === undefined) throw new Error('Profile task group missing');
@@ -484,7 +486,7 @@ async function prepareProfileTasks(): Promise<void> {
   await click('.abyss-task-collection-switcher [aria-label="List view"]');
   // An unsearched List uses the ordinary collection path, without a Search receipt.
   await waitFor(
-    () => document.querySelector('.abyss-center .abyss-task-card'),
+    () => activeDocument.querySelector('.abyss-center .abyss-task-card'),
     'task list preparation',
   );
   await frames();
@@ -695,7 +697,9 @@ export async function taskTimelineScenarios(host: Host, measure: Measure): Promi
     await click('.abyss-task-collection-switcher [aria-label="Timeline view"]');
     await searchReady(tasks);
     await waitFor(() => {
-      const scroller = document.querySelector<HTMLElement>('.abyss-center .abyss-task-timeline');
+      const scroller = activeDocument.querySelector<HTMLElement>(
+        '.abyss-center .abyss-task-timeline',
+      );
       return scroller !== null && timelineReady(scroller, '.abyss-task-timeline-row');
     }, 'ready task Timeline rows and dates');
     return { tasks, view: 'timeline' };
@@ -722,7 +726,7 @@ export async function projectScenarios(measure: Measure): Promise<void> {
     await measure(`ui.projects.${id}`, async () => {
       if (id === 'table') await click('.abyss-rail-btn[aria-label="Projects"]');
       await click(`.abyss-project-overview-switcher [aria-label="${label}"]`);
-      await waitFor(() => document.querySelector(selector), `project ${id} rows`);
+      await waitFor(() => activeDocument.querySelector(selector), `project ${id} rows`);
       await frames();
       if (id === 'timeline')
         await waitFor(
@@ -764,7 +768,7 @@ export async function statisticsScenarios(host: Host, measure: Measure): Promise
         if (id === 'rhythm') element('.abyss-rail-btn[aria-label="Analysis"]').click();
         else element(`[data-statistics-view="${id}"]`).click();
         await waitFor(() => {
-          const content = document.querySelector('.abyss-statistics-content');
+          const content = activeDocument.querySelector('.abyss-statistics-content');
           return (
             content !== null &&
             content.getAttribute('aria-busy') !== 'true' &&

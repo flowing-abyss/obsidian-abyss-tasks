@@ -13,6 +13,7 @@ import {
 } from '../../projects/projectTableModel';
 import { effectiveProjectTableDateDisplay } from '../../projects/projectTableSettings';
 import type { Project } from '../../projects/types';
+import { isRealmNode } from '../../ui/domRealm';
 import {
   writeClass,
   writeIcon,
@@ -988,7 +989,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   #bindGroupRow(rendered: RenderedGroupRow): void {
     const { element: row, cell } = rendered;
     cell.addEventListener('click', (event) => {
-      if (event.target instanceof Element && event.target.closest('a') !== null) return;
+      if (isRealmNode(event.target, 'Element') && event.target.closest('a') !== null) return;
       const key = rendered.context.key;
       this.#context.changeViewState(() => {
         this.#setGroupCollapsed(key, !this.isGroupCollapsed(key));

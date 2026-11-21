@@ -95,6 +95,7 @@ import {
 import { saveSettingsDraft } from '../../settings/settingsSaveFailure';
 import type { CalendarSettings, ProjectStatus } from '../../settings/types';
 import { createSearchWordSegmenter } from '../../tasks';
+import { isRealmHTMLElement, isRealmNode } from '../../ui/domRealm';
 import { writeClass, writeOptionalAttribute } from '../../ui/guardedDomWrites';
 import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
@@ -2498,7 +2499,7 @@ export class ProjectsTableView {
       const active = rendered.element.ownerDocument.activeElement;
       if (
         active === rendered.element.ownerDocument.body ||
-        (active instanceof HTMLElement && active.contains(this.root_abyssPrivate))
+        (isRealmHTMLElement(active) && active.contains(this.root_abyssPrivate))
       ) {
         this.focusSelectionCell_abyssPrivate(rendered.identity);
       } else {
@@ -2594,7 +2595,7 @@ export class ProjectsTableView {
     markdown.registerDomEvent(cell, 'contextmenu', (event) => {
       const field = rendered.field;
       if (
-        event.target instanceof Element &&
+        isRealmNode(event.target, 'Element') &&
         event.target.closest('.abyss-project-cell-editor') !== null
       )
         return;
@@ -2835,7 +2836,7 @@ export class ProjectsTableView {
   }
 
   private readonly handleDocumentFocusIn_abyssPrivate = (event: FocusEvent): void => {
-    if (event.target instanceof Node && !this.root_abyssPrivate.contains(event.target)) {
+    if (isRealmNode(event.target, 'Node') && !this.root_abyssPrivate.contains(event.target)) {
       this.creationInteractionRevision_abyssPrivate++;
       this.creationInteractionToken_abyssPrivate = undefined;
     }
@@ -3508,7 +3509,7 @@ export class ProjectsTableView {
     activeCell: ProjectTableSelectableCell | undefined,
     editorCell: HTMLElement,
   ): boolean {
-    if (!(activeElement instanceof HTMLElement)) return false;
+    if (!isRealmHTMLElement(activeElement)) return false;
     if (!activeElement.isConnected) return false;
     if (activeElement === this.root_abyssPrivate.ownerDocument.body) return false;
     if (activeElement.contains(this.root_abyssPrivate)) return false;

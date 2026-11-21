@@ -1,7 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText, type ContentPart, type ToolSet } from 'ai';
-import { z } from 'zod';
+import * as z from 'zod';
 import { pageReadSchema, researchResultSchema, researchSchema } from '../commandSchemas';
 import {
   CommandFailure,

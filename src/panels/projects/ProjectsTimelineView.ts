@@ -41,6 +41,7 @@ import {
   type TimelineViewportPosition,
 } from '../../projects/projectTimelineViewport';
 import type { Project } from '../../projects/types';
+import { isRealmHTMLElement, isRealmNode } from '../../ui/domRealm';
 import {
   createTimelineNavigation,
   createTimelineRangeHandle,
@@ -242,7 +243,7 @@ function exactRangeEventTarget(
   if (event.target === track) return track;
   if (event.target === bar) return bar;
   if (
-    event.target instanceof Element &&
+    isRealmNode(event.target, 'Element') &&
     event.target.closest('.abyss-project-timeline-handle')?.parentElement === bar
   ) {
     return bar;
@@ -1097,7 +1098,7 @@ export class ProjectsTimelineView<
     };
     const click = (event: MouseEvent): void => {
       if (
-        event.target instanceof Element &&
+        isRealmNode(event.target, 'Element') &&
         (event.target.closest('.abyss-project-table-cell') !== null ||
           event.target.closest('[data-timeline-part]') !== null)
       )
@@ -1425,7 +1426,7 @@ export class ProjectsTimelineView<
 
   private focusedDescendant_abyssPrivate(): HTMLElement | undefined {
     const active = this.root.ownerDocument.activeElement;
-    return active instanceof HTMLElement && this.root.contains(active) ? active : undefined;
+    return isRealmHTMLElement(active) && this.root.contains(active) ? active : undefined;
   }
 
   private focusedRangeIdentity_abyssPrivate(

@@ -1,6 +1,6 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { wrapLanguageModel } from 'ai';
-import { z } from 'zod';
+import * as z from 'zod';
 import { ProviderFailure } from './providerFailure';
 import type { ProviderModel } from './ProviderModelCatalog';
 

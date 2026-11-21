@@ -1,6 +1,6 @@
 import { createLocalJWKSet } from 'jose/jwks/local';
 import { jwtVerify } from 'jose/jwt/verify';
-import { z } from 'zod';
+import * as z from 'zod';
 import { ProviderFailure } from './providerFailure';
 
 const issuer = 'https://auth.openai.com';

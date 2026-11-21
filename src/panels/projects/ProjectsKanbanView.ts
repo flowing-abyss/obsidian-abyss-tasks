@@ -14,6 +14,7 @@ import {
 import type { ProjectKanbanSettings } from '../../projects/projectKanbanSettings';
 import { projectProgress, type ProjectTableGroup } from '../../projects/projectTableModel';
 import type { Project } from '../../projects/types';
+import { isRealmHTMLElement, isRealmNode } from '../../ui/domRealm';
 import {
   projectKanbanCardFields,
   projectKanbanCardKey,
@@ -324,10 +325,9 @@ export class ProjectsKanbanView<
     const group = this.rowModels_abyssPrivate.get(card.occurrenceId)?.group;
     if (group === undefined) throw new Error('Project group is no longer available');
     const active = this.root.ownerDocument.activeElement;
-    const focusedFieldId =
-      active instanceof HTMLElement
-        ? active.closest<HTMLElement>('[data-column-id]')?.dataset['columnId']
-        : undefined;
+    const focusedFieldId = isRealmHTMLElement(active)
+      ? active.closest<HTMLElement>('[data-column-id]')?.dataset['columnId']
+      : undefined;
     const source = captureProjectKanbanDropSource({
       project: card.project,
       fields: this.context_abyssPrivate.modelInput().fields,
@@ -341,7 +341,7 @@ export class ProjectsKanbanView<
       },
     });
     const revision = (this.dragFocusRevision_abyssPrivate += 1);
-    if (active instanceof HTMLElement && card.element.contains(active)) {
+    if (isRealmHTMLElement(active) && card.element.contains(active)) {
       this.dragFocus_abyssPrivate.set(source, {
         revision,
         path: card.project.path,
@@ -757,7 +757,7 @@ export class ProjectsKanbanView<
   private focusedDescendant_abyssPrivate(): HTMLElement | undefined {
     if (!this.restoreNativeFocus_abyssPrivate) return;
     const active = this.root.ownerDocument.activeElement;
-    return active instanceof HTMLElement && this.root.contains(active) ? active : undefined;
+    return isRealmHTMLElement(active) && this.root.contains(active) ? active : undefined;
   }
 
   private restoreFocusedDescendant_abyssPrivate(focused: HTMLElement | undefined): void {
@@ -773,7 +773,7 @@ export class ProjectsKanbanView<
 
   private focusMovedOutsideBoard_abyssPrivate(active: Element | null): boolean {
     return (
-      active instanceof HTMLElement &&
+      isRealmHTMLElement(active) &&
       active !== this.root.ownerDocument.body &&
       !this.root.contains(active)
     );
@@ -1169,7 +1169,7 @@ export class ProjectsKanbanView<
   }
 
   private toggleGroup_abyssPrivate(event: MouseEvent, key: string): void {
-    if (event.target instanceof Element && event.target.closest('a') !== null) return;
+    if (isRealmNode(event.target, 'Element') && event.target.closest('a') !== null) return;
     this.context_abyssPrivate
       .requestViewChange(() => {
         if (this.collapsedGroups_abyssPrivate.has(key))
@@ -1233,7 +1233,7 @@ export class ProjectsKanbanView<
     };
     element.addEventListener('click', (event) => {
       if (
-        event.target instanceof Element &&
+        isRealmNode(event.target, 'Element') &&
         event.target.closest(
           'a, button, input, textarea, select, .abyss-project-cell-editor, .abyss-project-kanban-cell',
         ) !== null

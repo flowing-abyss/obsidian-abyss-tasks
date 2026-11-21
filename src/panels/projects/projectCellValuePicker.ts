@@ -7,6 +7,7 @@ import {
   type PreparedSearchQuery,
   type SearchWordSegmenter,
 } from '../../tasks';
+import { isRealmNode } from '../../ui/domRealm';
 import { isImeOwnedEvent } from '../../ui/ime';
 import { handleLocalSearchKey } from '../../ui/localSearchKeys';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
@@ -397,7 +398,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     setIcon(edit, 'pencil');
     element.addEventListener('click', (event) => {
       event.stopPropagation();
-      if (event.target instanceof Element && event.target.closest('a') !== null) {
+      if (isRealmNode(event.target, 'Element') && event.target.closest('a') !== null) {
         event.preventDefault();
       }
       this.mutate_abyssPrivate(choice.value, this.editIndex_abyssPrivate !== undefined);

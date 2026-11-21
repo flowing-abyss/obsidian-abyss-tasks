@@ -259,7 +259,7 @@ it.each([false, true])(
           }),
         ).toMatchObject({ error: { code: 'UNSUPPORTED_OPERATION' } });
       } else expect(client.tasks.prepare).toBeUndefined();
-      const file = required(h.app.vault.getFiles().find((entry) => entry.path === 'a.md'));
+      const file = required(h.app.vault.getFileByPath('a.md') ?? undefined);
       expect(await h.app.vault.read(file)).toBe('- [ ] task\n');
     } finally {
       provider.dispose();

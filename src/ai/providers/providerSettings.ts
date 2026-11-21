@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import { ProviderFailure } from './providerFailure';
 
 export const chatGptPlanSecret = 'abyss-tasks-chatgpt-plan';

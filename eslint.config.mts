@@ -1,12 +1,10 @@
 import json from '@eslint/json';
 import prettier from 'eslint-config-prettier';
 import obsidianmd from 'eslint-plugin-obsidianmd';
-import { PlainTextParser } from 'eslint-plugin-obsidianmd/dist/lib/plainTextParser.js';
 import regexp from 'eslint-plugin-regexp';
 import sonarjs from 'eslint-plugin-sonarjs';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import * as globals from 'globals';
-import tseslint from 'typescript-eslint';
 import { projectAmbientRule } from './eslint-project-policy.mts';
 
 const testFiles = [
@@ -36,7 +34,7 @@ function obsidianRuleOptions(rule: string): unknown[] {
   throw new Error(`eslint-plugin-obsidianmd no longer configures ${rule}.`);
 }
 
-// Copied verbatim, including the stray 'warn' entry between obsidianmd's globals.
+// Keep the host's restricted globals when adding the task domain restrictions.
 const obsidianRestrictedGlobals = obsidianRuleOptions('no-restricted-globals');
 
 export default defineConfig(
@@ -419,14 +417,6 @@ export default defineConfig(
   },
   {
     files: ['manifest.json'],
-    languageOptions: {
-      parser: tseslint.parser,
-      parserOptions: {
-        projectService: false,
-        extraFileExtensions: ['.json'],
-      },
-    },
-    plugins: { obsidianmd },
     rules: {
       ...metadataIncompatibleRules,
       'obsidianmd/validate-manifest': 'error',
@@ -434,8 +424,6 @@ export default defineConfig(
   },
   {
     files: ['LICENSE'],
-    languageOptions: { parser: PlainTextParser },
-    plugins: { obsidianmd },
     rules: {
       ...metadataIncompatibleRules,
       'obsidianmd/validate-license': 'error',

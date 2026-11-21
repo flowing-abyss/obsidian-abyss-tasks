@@ -81,16 +81,21 @@ const REVIEWED_DIFFERENCES: ReadonlyMap<
     '@typescript-eslint/no-floating-promises',
     { obsidianmd: [2], project: [2, { ignoreIIFE: false, ignoreVoid: false }] },
   ],
-  // The rule's default, stated explicitly.
-  [
-    '@typescript-eslint/no-misused-promises',
-    { obsidianmd: [2], project: [2, { checksVoidReturn: true }] },
-  ],
   // Stricter: an error, and it also checks arguments and rest siblings.
   [
     '@typescript-eslint/no-unused-vars',
     {
-      obsidianmd: [1, { args: 'none', ignoreRestSiblings: true }],
+      obsidianmd: [
+        1,
+        {
+          args: 'none',
+          caughtErrors: 'all',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+          ignoreRestSiblings: true,
+          ignoreUsingDeclarations: true,
+        },
+      ],
       project: [2, { argsIgnorePattern: '^_' }],
     },
   ],
@@ -251,7 +256,6 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
     async () => {
       expect(await parityProblems(projectLint, [])).toEqual([
         '@typescript-eslint/no-floating-promises is a reviewed difference that no source file uses',
-        '@typescript-eslint/no-misused-promises is a reviewed difference that no source file uses',
         '@typescript-eslint/no-unused-vars is a reviewed difference that no source file uses',
         '@typescript-eslint/restrict-template-expressions is a reviewed difference that no source file uses',
       ]);

@@ -7,6 +7,7 @@ import {
   type TrackedDayRow,
 } from '../../tasks';
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
+import { isRealmHTMLElement } from '../domRealm';
 import { writeText } from '../guardedDomWrites';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
@@ -121,7 +122,7 @@ interface FocusedControl {
 function focusedControl(session: PopoverSession): FocusedControl | undefined {
   const { element } = session.shell;
   const active = element.ownerDocument.activeElement;
-  if (!(active instanceof HTMLElement) || !element.contains(active)) return undefined;
+  if (!isRealmHTMLElement(active) || !element.contains(active)) return undefined;
   const rowKey = active.closest<HTMLElement>('.abyss-tracked-row')?.dataset[ROW_KEY];
   const control = active.dataset[CONTROL];
   if (rowKey === undefined || control === undefined) return undefined;
@@ -144,7 +145,7 @@ function restoreFocus(session: PopoverSession, focused: FocusedControl | undefin
   for (const row of session.shell.element.querySelectorAll<HTMLElement>('.abyss-tracked-row')) {
     if (row.dataset[ROW_KEY] !== focused.rowKey) continue;
     const control = controlIn(row, focused.control);
-    if (control instanceof HTMLElement) control.focus({ preventScroll: true });
+    if (isRealmHTMLElement(control)) control.focus({ preventScroll: true });
     return;
   }
 }

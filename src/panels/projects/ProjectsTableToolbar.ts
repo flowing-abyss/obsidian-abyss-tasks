@@ -21,6 +21,7 @@ import {
 import type { ProjectTimelineSettings } from '../../projects/projectTimelineSettings';
 import type { StatusGroup } from '../../projects/status';
 import { moveProjectColumn, setProjectColumnVisibility } from '../../settings/projectTableSettings';
+import { isRealmHTMLElement } from '../../ui/domRealm';
 import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { ViewModeSwitcher } from '../../ui/ViewModeSwitcher';
@@ -242,7 +243,7 @@ export class ProjectsTableToolbar {
 
   private restoreStatusButtonFocus_abyssPrivate(focused: Element | null): void {
     if (
-      focused instanceof HTMLElement &&
+      isRealmHTMLElement(focused) &&
       focused.isConnected &&
       this.badges_abyssPrivate.contains(focused) &&
       this.badges_abyssPrivate.ownerDocument.activeElement !== focused

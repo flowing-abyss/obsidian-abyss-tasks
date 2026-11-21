@@ -13,10 +13,9 @@ import {
   flushMicrotasks,
   useRealMoment,
 } from './helpers';
-import { accessibleName, useHostTooltips } from './support/hostTooltips';
+import { accessibleName } from './support/hostTooltips';
 
 useRealMoment();
-useHostTooltips();
 
 const OFFSET_MINUTES = 180;
 /** 2026-09-18T14:05:32+03:00, a Friday, the instant every fixture below is written against. */
@@ -490,8 +489,3 @@ describe('rail tracking widget', () => {
     }
   });
 });
-
-vi.mock('obsidian', async () => ({
-  ...(await import('obsidian-test-mocks/obsidian')),
-  setTooltip: vi.fn(),
-}));

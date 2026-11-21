@@ -39,7 +39,7 @@ function declarationText(declarations: readonly postcss.Declaration[]): string {
   return declarations
     .map(
       (declaration) =>
-        `${declaration.prop}: ${declaration.value}${declaration.important ? ' !important' : ''};`,
+        `${declaration.prop}: ${declaration.value}${declaration.important === true ? ' !important' : ''};`,
     )
     .join('\n');
 }

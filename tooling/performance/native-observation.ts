@@ -185,7 +185,8 @@ export class NativeObservation {
       ...metrics,
       longTasks: this.observer === undefined ? null : metrics.longTasks,
       longTaskMs: this.observer === undefined ? null : metrics.longTaskMs,
-      domNodes: document.querySelector('.abyss-panel-view')?.querySelectorAll('*').length ?? 0,
+      domNodes:
+        activeDocument.querySelector('.abyss-panel-view')?.querySelectorAll('*').length ?? 0,
     };
   }
   stop(): void {

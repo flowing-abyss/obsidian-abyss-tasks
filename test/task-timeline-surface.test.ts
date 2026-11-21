@@ -12,6 +12,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { defaultTaskTimelineSettings } from '../src/task-lists/taskTimelineSettings';
 import { localDate, type TaskPlanning } from '../src/tasks';
 import { expectDefined, flushMicrotasks } from './helpers';
+import { serializedPercent } from './support/cssGeometry';
 import { projectWindowMigration } from './support/projectWindowMigration';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 import { taskViewportOwner } from './support/taskViewportOwner';
@@ -585,11 +586,11 @@ it.each(['commit', 'cancel'] as const)(
         h.flush();
         const after = h.surface.captureScroll().viewport;
         expect(after.window.startDay).not.toBe(before.window.startDay);
-        const displayedOrdinal =
-          (projectCalendarDayOrdinal(after.window.startDay) as number) +
-          (parseFloat(line.style.left) / 100) * after.window.dayCount -
-          0.5;
-        expect(displayedOrdinal).toBeCloseTo(expectedOrdinal, 7);
+        const offset =
+          expectedOrdinal - (projectCalendarDayOrdinal(after.window.startDay) as number);
+        expect(line.style.left).toBe(
+          serializedPercent(((offset + 0.5) / after.window.dayCount) * 100),
+        );
         expect(h.host.querySelector('.abyss-project-boundary-handle.is-end')).toBe(handle);
         expect(h.surface.element('one')).toBe(card);
       }
@@ -616,11 +617,12 @@ it.each(['commit', 'cancel'] as const)(
         );
       else expect(apply).not.toHaveBeenCalled();
       const after = h.surface.captureScroll().viewport;
-      const restoredOrdinal =
-        (projectCalendarDayOrdinal(after.window.startDay) as number) +
-        (parseFloat(line.style.left) / 100) * after.window.dayCount -
-        0.5;
-      expect(restoredOrdinal).toBeCloseTo(projectCalendarDayOrdinal('2026-10-28') as number, 7);
+      const offset =
+        (projectCalendarDayOrdinal('2026-10-28') as number) -
+        (projectCalendarDayOrdinal(after.window.startDay) as number);
+      expect(line.style.left).toBe(
+        serializedPercent(((offset + 0.5) / after.window.dayCount) * 100),
+      );
     } finally {
       h.dispose();
     }

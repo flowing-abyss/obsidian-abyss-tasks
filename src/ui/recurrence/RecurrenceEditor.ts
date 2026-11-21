@@ -10,7 +10,7 @@ import {
   type TaskOccurrenceResult,
   type TaskPatch,
 } from '../../tasks';
-import { isRealmHTMLElement } from '../domRealm';
+import { isRealmHTMLElement, isRealmNode } from '../domRealm';
 import { isImeOwnedEvent } from '../ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
@@ -396,16 +396,13 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   private textInput_abyssPrivate(
     element: Element | null,
   ): HTMLInputElement | HTMLTextAreaElement | undefined {
-    return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+    return isRealmNode(element, 'HTMLInputElement') || isRealmNode(element, 'HTMLTextAreaElement')
       ? element
       : undefined;
   }
 
   private controlKey_abyssPrivate(element: Element | null): string | undefined {
-    if (
-      !(element instanceof HTMLElement) ||
-      !this.options_abyssPrivate.container.contains(element)
-    ) {
+    if (!isRealmHTMLElement(element) || !this.options_abyssPrivate.container.contains(element)) {
       return undefined;
     }
     return element.dataset['recurrenceFocusKey'];
@@ -423,7 +420,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     const control = this.controlForKey_abyssPrivate(draft.focusedControl);
     control?.focus();
     if (
-      control instanceof HTMLInputElement &&
+      isRealmNode(control, 'HTMLInputElement') &&
       draft.selectionStart !== undefined &&
       draft.selectionEnd !== undefined
     ) {

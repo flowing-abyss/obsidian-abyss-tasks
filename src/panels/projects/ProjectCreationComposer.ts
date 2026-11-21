@@ -3,6 +3,7 @@ import {
   isProjectCreationError,
   type ProjectCreateRequest,
 } from '../../projects/projectCreation';
+import { isRealmNode } from '../../ui/domRealm';
 import { isImeOwnedEvent } from '../../ui/ime';
 import { mountProjectCellEditorPosition } from './projectCellEditorPosition';
 
@@ -197,7 +198,7 @@ export class ProjectCreationComposer {
     const surface = this.surface_abyssPrivate;
     if (
       surface === undefined ||
-      !(event.target instanceof Node) ||
+      !isRealmNode(event.target, 'Node') ||
       surface.contains(event.target)
     ) {
       return;
@@ -209,8 +210,7 @@ export class ProjectCreationComposer {
     const surface = this.surface_abyssPrivate;
     if (event.key !== 'Escape' || surface === undefined || isImeOwnedEvent(event)) return;
     const active = surface.ownerDocument.activeElement;
-    const restoreFocus =
-      active === surface.ownerDocument.body || (active instanceof Node && surface.contains(active));
+    const restoreFocus = active === surface.ownerDocument.body || surface.contains(active);
     event.preventDefault();
     event.stopPropagation();
     this.close_abyssPrivate(restoreFocus);

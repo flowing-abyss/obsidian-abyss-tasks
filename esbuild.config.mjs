@@ -16,11 +16,24 @@ const sdkRequire = createRequire(fileURLToPath(import.meta.resolve('@ai-sdk/open
 const cerebrasRequire = createRequire(fileURLToPath(import.meta.resolve('@ai-sdk/cerebras')));
 const providerUtilsEntry = sdkRequire.resolve('@ai-sdk/provider-utils');
 const providerUtilsRequire = createRequire(providerUtilsEntry);
+// Zod re-exports its namespace as `z`. esbuild retains every locale when providers
+// import that aggregate. Direct namespace imports let it follow each static member use.
+const providerEntries = new Set([
+  ...[
+    '@ai-sdk/openai',
+    '@ai-sdk/anthropic',
+    '@ai-sdk/groq',
+    '@ai-sdk/cerebras',
+    '@openrouter/ai-sdk-provider',
+  ].map((name) => fileURLToPath(import.meta.resolve(name))),
+  cerebrasRequire.resolve('@ai-sdk/openai-compatible'),
+]);
 const thirdPartyNotices = combineNotices([
   dependencyNotice('@tanstack/charts', chartsEntry, 'LICENSE'),
   dependencyNotice('d3-array', chartsRequire.resolve('d3-array'), 'LICENSE'),
   dependencyNotice('d3-scale', chartsRequire.resolve('d3-scale'), 'LICENSE'),
   dependencyNotice('d3-shape', chartsRequire.resolve('d3-shape'), 'LICENSE'),
+  dependencyNotice('tslib', chartsRequire.resolve('tslib'), 'LICENSE.txt'),
   dependencyNotice('internmap', arrayRequire.resolve('internmap'), 'LICENSE'),
   dependencyNotice('minisearch', fileURLToPath(import.meta.resolve('minisearch')), 'LICENSE.txt'),
   dependencyNotice(
@@ -132,6 +145,20 @@ const taskSearchWorkerPlugin = {
   },
 };
 
+const providerZodImports = {
+  name: 'provider-zod-imports',
+  setup(build) {
+    build.onLoad({ filter: /[/\\]dist[/\\]index\.js$/ }, ({ path: file }) => {
+      if (!providerEntries.has(file)) return;
+      const contents = readFileSync(file, 'utf8').replace(
+        /^import \{ z(?: as (z\d+))? \} from "zod\/v4";$/gm,
+        (_, binding = 'z') => `import * as ${binding} from "zod/v4";`,
+      );
+      return { contents, loader: 'js' };
+    });
+  },
+};
+
 const context = await esbuild.context({
   banner: {
     js: banner,
@@ -169,7 +196,7 @@ const context = await esbuild.context({
   mangleProps: prod ? /_abyssPrivate$/ : undefined,
   mangleQuoted: false,
   metafile: prod || analyze,
-  plugins: [taskSearchWorkerPlugin, nosourcemapPlugin],
+  plugins: [providerZodImports, taskSearchWorkerPlugin, nosourcemapPlugin],
 });
 
 if (prod) {
@@ -201,25 +228,28 @@ function dependencyNotice(name, entry, licenseFile) {
   const { directory, pkg } = installedPackage(name, entry);
   const license = readFileSync(path.join(directory, licenseFile), 'utf8').trim();
   if (license.length === 0) throw new Error(`The installed license for ${name} is empty`);
+  const zodImportNotice = providerEntries.has(entry)
+    ? '\nModified by Abyss Tasks: the bundle uses direct Zod namespace imports.'
+    : '';
   const modification =
     name === '@openrouter/ai-sdk-provider'
       ? '\nModified by Abyss Tasks: legacy multiline regex flag expansion explicitly rejects unsupported lookbehind; see the pinned pnpm patch.'
       : '';
   return {
-    attribution: `Package: ${name}@${pkg.version}\nLicense: ${pkg.license}${modification}`,
+    attribution: `Package: ${name}@${pkg.version}\nLicense: ${pkg.license}${zodImportNotice}${modification}`,
     license,
   };
 }
 
-// provider-utils5.0.75 omits LICENSE from its package. Its official vercel/ai
-// monorepo uses the identical Vercel Apache notice installed with ai7.0.164.
+// provider-utils5.0.82 omits LICENSE from its package. Its official vercel/ai
+// monorepo uses the identical Vercel Apache notice installed with ai7.0.177.
 // Full Apache terms are included by OpenRouter's installed LICENSE above.
 function providerUtilsNotice() {
   const { pkg } = installedPackage('@ai-sdk/provider-utils', providerUtilsEntry);
   const shared = installedPackage('ai', fileURLToPath(import.meta.resolve('ai')));
   if (
-    pkg.version !== '5.0.75' ||
-    shared.pkg.version !== '7.0.164' ||
+    pkg.version !== '5.0.82' ||
+    shared.pkg.version !== '7.0.177' ||
     pkg.license !== 'Apache-2.0' ||
     shared.pkg.license !== 'Apache-2.0'
   )

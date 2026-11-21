@@ -5,7 +5,7 @@ import {
   type LanguageModelMiddleware,
   type Schema,
 } from 'ai';
-import { z } from 'zod';
+import * as z from 'zod';
 import type { CommandReferenceBook } from './CommandReferenceBook';
 type JsonSchema = Awaited<Schema['jsonSchema']>;
 type Definition = JsonSchema | boolean;

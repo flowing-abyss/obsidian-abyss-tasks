@@ -1,5 +1,6 @@
 import { setTooltip } from 'obsidian';
 import type { ProjectTableGroup } from '../../projects/projectTableModel';
+import { isRealmNode } from '../../ui/domRealm';
 import type {
   ProjectKanbanDropPlan,
   ProjectKanbanDropSource,
@@ -91,7 +92,7 @@ function sameDropTarget(left: ProjectKanbanDropTarget, right: ProjectKanbanDropT
 }
 
 function protectedTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
+  if (!isRealmNode(target, 'Element')) return false;
   const control = target.closest(
     'a, button, input, textarea, select, [contenteditable="true"], .abyss-project-cell-editor',
   );
@@ -103,8 +104,8 @@ function asDataTransfer(event: Event): DataTransfer | undefined {
 }
 
 function elementFromTarget(target: EventTarget | null): Element | null {
-  if (target instanceof Element) return target;
-  if (target instanceof Node) return target.parentElement;
+  if (isRealmNode(target, 'Element')) return target;
+  if (isRealmNode(target, 'Node')) return target.parentElement;
   return null;
 }
 
@@ -116,7 +117,7 @@ function cardFromEvent(event: Event): HTMLElement | null {
 
 function validDragStart(event: Event, gesture: ProvisionalGesture): boolean {
   return (
-    event.target instanceof Node &&
+    isRealmNode(event.target, 'Node') &&
     (event.target === gesture.card || gesture.card.contains(event.target)) &&
     !protectedTarget(gesture.origin)
   );
@@ -461,7 +462,7 @@ export class ProjectKanbanDragController {
 
   private readonly dragOver_abyssPrivate = (event: Event): void => {
     const active = this.active_abyssPrivate;
-    if (active === undefined || !(event.target instanceof Element)) return;
+    if (active === undefined || !isRealmNode(event.target, 'Element')) return;
     const mouse = event as MouseEvent;
     const hit = this.logicalHit_abyssPrivate(mouse.clientX, mouse.clientY, active.source);
     const target =
@@ -700,7 +701,7 @@ export class ProjectKanbanDragController {
 
   private readonly drop_abyssPrivate = (event: Event): void => {
     const active = this.active_abyssPrivate;
-    if (active === undefined || !(event.target instanceof Element)) return;
+    if (active === undefined || !isRealmNode(event.target, 'Element')) return;
     if (!validInternalTransfer(event, active.source)) {
       this.cleanup_abyssPrivate(false);
       this.adapter_abyssPrivate.reportFailure(new Error('Invalid project card drag'));
@@ -733,10 +734,9 @@ export class ProjectKanbanDragController {
   };
 
   private readonly click_abyssPrivate = (event: Event): void => {
-    const path =
-      event.target instanceof Element
-        ? event.target.closest<HTMLElement>('.abyss-project-kanban-card')?.dataset['projectPath']
-        : undefined;
+    const path = isRealmNode(event.target, 'Element')
+      ? event.target.closest<HTMLElement>('.abyss-project-kanban-card')?.dataset['projectPath']
+      : undefined;
     if (path === undefined || path !== this.suppressClickPath_abyssPrivate) return;
     this.suppressClickPath_abyssPrivate = undefined;
     event.preventDefault();

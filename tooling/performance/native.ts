@@ -294,7 +294,7 @@ export function createMeasure(context: MeasurementContext): Measure {
   return async (id, action, prepare) => {
     if (!context.isActive()) throw new Error('Profile harness stopped');
     assertViewport(context.viewport);
-    if (document.visibilityState !== 'visible')
+    if (activeDocument.visibilityState !== 'visible')
       throw new Error('Profile window is no longer visible');
     bridge.save('progress.json', {
       scenario: id,
@@ -330,7 +330,7 @@ export function createMeasure(context: MeasurementContext): Measure {
       bridge.save('failure-dom.json', {
         scenario: id,
         error: String(error),
-        html: document.querySelector('.abyss-panel-view')?.outerHTML ?? '',
+        html: activeDocument.querySelector('.abyss-panel-view')?.outerHTML ?? '',
       });
       throw error;
     } finally {
@@ -355,7 +355,7 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
       ? undefined
       : new HiddenWindowObservation(
           bridge.window,
-          document,
+          host.workspace.containerEl.ownerDocument,
           (evidence) => {
             bridge.save('hidden-window.json', evidence);
           },
@@ -470,7 +470,7 @@ async function suite(
   await cdp?.memory('analysis-ready');
   if (cdp !== undefined)
     bridge.save('analysis-dom.json', {
-      html: document.querySelector('.abyss-panel-view')?.outerHTML,
+      html: activeDocument.querySelector('.abyss-panel-view')?.outerHTML,
       width: innerWidth,
       height: innerHeight,
     });

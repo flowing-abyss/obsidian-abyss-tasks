@@ -8,7 +8,7 @@ import {
   type ToolSet,
   type TypedToolCall,
 } from 'ai';
-import { z } from 'zod';
+import * as z from 'zod';
 import type { TasksApiV1 } from '../../api';
 import { repairEncodedContainers } from './commandArgumentRepair';
 import { CommandEvidence } from './CommandEvidence';

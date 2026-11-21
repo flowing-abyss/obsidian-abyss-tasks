@@ -422,6 +422,7 @@ describe('ProjectsTimelineView', () => {
     sheet.textContent = styles;
     activeDocument.head.append(sheet);
     const { host } = mount([project('Projects/A.md', '2026-09-01', '2026-09-03')]);
+    host.setCssProps({ '--background-primary': '#fff', '--background-modifier-hover': '#ddd' });
     const row = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-row'));
     const summary = expectDefined(
       row.querySelector<HTMLElement>('.abyss-project-timeline-summary'),
@@ -817,6 +818,7 @@ describe('ProjectsTimelineView', () => {
     sheet.textContent = styles;
     activeDocument.head.append(sheet);
     const { host } = mount([project('Projects/A.md')], new Date(2026, 8, 13), 'day');
+    host.setCssProps({ '--text-muted': '#456789' });
     const cell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-timeline-axis-cell:not(.is-today)'),
     );
@@ -824,8 +826,8 @@ describe('ProjectsTimelineView', () => {
       host.querySelector<HTMLElement>('.abyss-project-timeline-axis-hierarchy-cell:not(.is-today)'),
     );
 
-    expect(activeWindow.getComputedStyle(cell).color).toBe('var(--text-muted)');
-    expect(activeWindow.getComputedStyle(hierarchyContext).color).toBe('var(--text-muted)');
+    expect(activeWindow.getComputedStyle(cell).color).toBe('rgb(69, 103, 137)');
+    expect(activeWindow.getComputedStyle(hierarchyContext).color).toBe('rgb(69, 103, 137)');
     sheet.remove();
   });
 

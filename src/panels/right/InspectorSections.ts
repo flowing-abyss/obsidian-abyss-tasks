@@ -872,7 +872,7 @@ export class InspectorSections {
     this.#enableWikiLinks(ta, task, editorOwner);
     // Auto-grow to content, but never below the initial title height.
     const grow = (): void => {
-      ta.setCssStyles({ height: 'auto' });
+      ta.style.removeProperty('height');
       ta.setCssStyles({ height: `${Math.max(ta.scrollHeight, startHeight)}px` });
     };
     ta.addEventListener('input', grow);

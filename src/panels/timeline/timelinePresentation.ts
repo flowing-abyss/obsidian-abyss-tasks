@@ -5,6 +5,7 @@ import type {
 } from '../../projects/projectTimelineAxis';
 import type { ProjectTimelineWindow } from '../../projects/projectTimelineModel';
 import type { ProjectTimelineScale } from '../../projects/projectTimelineSettings';
+import { isRealmHTMLElement } from '../../ui/domRealm';
 
 export const TIMELINE_SCALES = [
   ['day', 'Day'],
@@ -86,7 +87,7 @@ export function patchTimelineGrid(grid: HTMLElement, layout: ProjectTimelineAxis
   }
   for (const [index, boundary] of boundaries.entries()) {
     const line = grid.children.item(index);
-    if (!(line instanceof HTMLElement)) continue;
+    if (!isRealmHTMLElement(line)) continue;
     line.dataset['day'] = boundary.day;
     line.className = `abyss-project-timeline-gridline is-${boundary.weight}`;
     line.style.left = `${String(boundary.leftPercent)}%`;

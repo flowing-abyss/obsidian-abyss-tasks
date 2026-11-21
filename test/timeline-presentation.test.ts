@@ -5,6 +5,7 @@ import {
   patchTimelineToday,
 } from '../src/panels/timeline/timelinePresentation';
 import { projectTimelineAxisLayout } from '../src/projects/projectTimelineAxis';
+import { serializedPercent } from './support/cssGeometry';
 import { timelineWindow } from './support/timelineWindow';
 
 const window = timelineWindow('2024-01-01', '2024-12-31', 'day');
@@ -170,7 +171,7 @@ describe('retained Timeline presentation', () => {
     patchTimelineToday(host, narrower, new Date(2024, 2, 1));
     expect(host.firstElementChild).toBe(marker);
     expect(marker?.getAttribute('aria-label')).toBe('Today, 2024-03-01');
-    expect((marker as HTMLElement).style.left).toBe(`${(29.5 / 60) * 100}%`);
+    expect((marker as HTMLElement).style.left).toBe(serializedPercent((29.5 / 60) * 100));
     patchTimelineToday(host, narrower, new Date(2024, 3, 1));
     expect(host.children).toHaveLength(0);
   });

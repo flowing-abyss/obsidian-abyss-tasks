@@ -24,10 +24,8 @@ import {
   methodOf,
   useRealMoment,
 } from './helpers';
-import { useHostTooltips } from './support/hostTooltips';
 
 useRealMoment();
-useHostTooltips();
 
 const css = await loadPluginStyles();
 
@@ -1650,8 +1648,3 @@ describe('tracking a selected sub-task', () => {
     expect(await harness.read()).toBe(before);
   });
 });
-
-vi.mock('obsidian', async () => ({
-  ...(await import('obsidian-test-mocks/obsidian')),
-  setTooltip: vi.fn(),
-}));

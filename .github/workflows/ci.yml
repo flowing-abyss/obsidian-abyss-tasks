@@ -16,7 +16,7 @@ jobs:
 
     strategy:
       matrix:
-        # cssnano 9 and jsdom 30 require Node ^22.22.3 / ^24.15.0 / >=26.
+        # The supported toolchain requires Node ^22.22.3 / ^24.15.0 / >=26.
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
         node-version: [22.x, 24.x]
 

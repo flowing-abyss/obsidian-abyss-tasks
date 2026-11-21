@@ -19,10 +19,8 @@ import {
   loadPluginStyles,
   useRealMoment,
 } from './helpers';
-import { useHostTooltips } from './support/hostTooltips';
 
 useRealMoment();
-useHostTooltips();
 
 const css = await loadPluginStyles();
 
@@ -690,8 +688,3 @@ describe('tracked tasks popover', () => {
     ]);
   });
 });
-
-vi.mock('obsidian', async () => ({
-  ...(await import('obsidian-test-mocks/obsidian')),
-  setTooltip: vi.fn(),
-}));

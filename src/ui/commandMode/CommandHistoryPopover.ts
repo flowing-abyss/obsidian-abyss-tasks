@@ -181,6 +181,7 @@ export class CommandHistoryPopover {
       );
     });
     remove.addEventListener('click', () => {
+      if (remove === element.ownerDocument.activeElement) this.input.focus({ preventScroll: true });
       runAsyncAction(
         this.run(() => this.options.owner.delete(id), commandMessage('Could not delete session')),
         commandMessage('Could not delete session'),

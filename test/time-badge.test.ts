@@ -23,10 +23,9 @@ import {
   loadPluginStyles,
   useRealMoment,
 } from './helpers';
-import { accessibleName, useHostTooltips } from './support/hostTooltips';
+import { accessibleName } from './support/hostTooltips';
 
 useRealMoment();
-useHostTooltips();
 
 const css = await loadPluginStyles();
 
@@ -686,14 +685,4 @@ describe('inspector tracked time badge weight', () => {
       '.abyss-rail-tracking.is-tracking',
     ]);
   });
-});
-
-vi.mock('obsidian', async () => {
-  const obsidian = await import('obsidian-test-mocks/obsidian');
-  const { InspectorModalMock } = await import('./support/inspectorModalMock');
-  return {
-    ...obsidian,
-    Modal: InspectorModalMock,
-    setTooltip: vi.fn(),
-  };
 });

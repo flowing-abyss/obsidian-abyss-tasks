@@ -26,7 +26,6 @@ import {
   useRealMoment,
 } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
-import { useHostTooltips } from './support/hostTooltips';
 import {
   inspectorCleanups as cleanups,
   inspectorHarness as harness,
@@ -37,7 +36,6 @@ import { prepareTaskPanelViewport, useTaskPanelViewport } from './support/taskPa
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
-useHostTooltips();
 useTaskPanelViewport();
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) {
@@ -1128,7 +1126,7 @@ describe('inspector dependency navigation', () => {
         '[data-dependency-direction="blocked-by"] .abyss-status-marker',
       ),
     );
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       marker.focus();
       marker.dispatchEvent(
@@ -1188,7 +1186,7 @@ describe('inspector dependency navigation', () => {
       throw new Error('Missing fixtures');
     const beforeRefs = [h.node('Current').target, h.node('Blocker').target];
     const marker = button(h.el, '[data-dependency-direction="blocked-by"] .abyss-status-marker');
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       vi.runOnlyPendingTimers();
@@ -1373,7 +1371,7 @@ describe('inspector dependency navigation', () => {
         '[data-dependency-direction="blocked-by"] .abyss-status-marker',
       ),
     );
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       vi.runOnlyPendingTimers();
@@ -3174,13 +3172,3 @@ it.for(['End', 'Home'])(
     });
   },
 );
-
-vi.mock('obsidian', async () => {
-  const obsidian = await import('obsidian-test-mocks/obsidian');
-  const { InspectorModalMock } = await import('./support/inspectorModalMock');
-  return {
-    ...obsidian,
-    Modal: InspectorModalMock,
-    setTooltip: vi.fn(),
-  };
-});

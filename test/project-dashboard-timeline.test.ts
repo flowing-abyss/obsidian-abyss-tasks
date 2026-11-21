@@ -8,6 +8,7 @@ import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectField
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { deferred, expectDefined, flushMicrotasks } from './helpers';
+import { serializedPercent } from './support/cssGeometry';
 import { timelineWindow } from './support/timelineWindow';
 afterEach(() => vi.restoreAllMocks());
 function pointer(type: string, clientX: number): Event {
@@ -261,7 +262,7 @@ it('keeps a project boundary in the exposed viewport and reveals its day even in
     vi.spyOn(h.host, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 210 } as DOMRect);
     h.view.update(h.window);
     expect(h.bar.classList.contains('is-offscreen')).toBe(true);
-    expect(parseFloat(h.bar.style.left)).toBeCloseTo((110 / 280) * 100, 6);
+    expect(h.bar.style.left).toBe(serializedPercent((110 / 280) * 100));
     h.bar.click();
     expect(h.revealDay).toHaveBeenCalledWith('2026-10-12');
   } finally {
@@ -281,8 +282,8 @@ it.each([
       vi.spyOn(h.host, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 210 } as DOMRect);
       h.view.update(h.window);
       const edge = arrow === '←' ? 0 : (110 / 280) * 100;
-      expect(parseFloat(h.start.style.left)).toBeCloseTo(edge, 6);
-      expect(parseFloat(h.bar.style.left)).toBeCloseTo(edge, 6);
+      expect(h.start.style.left).toBe(serializedPercent(edge));
+      expect(h.bar.style.left).toBe(serializedPercent(edge));
       expect(h.start.classList.contains('is-offscreen')).toBe(true);
       expect(h.bar.classList.contains('is-offscreen')).toBe(true);
       expect(h.start.textContent).toBe(`Start ${arrow}`);
@@ -329,9 +330,9 @@ it.each(['finish', 'cancel', 'reject'] as const)(
           height: 70,
         } as DOMRect);
         h.view.update(h.window);
-        expect(
-          parseFloat(expectDefined(track.querySelector<HTMLElement>('.is-end')).style.left),
-        ).toBeCloseTo(startDay === '2026-10-02' ? 25 : 46.4285714286, 6);
+        expect(expectDefined(track.querySelector<HTMLElement>('.is-end')).style.left).toBe(
+          serializedPercent(startDay === '2026-10-02' ? 25 : 46.4285714286),
+        );
       }
       if (outcome === 'cancel') {
         h.bar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -350,9 +351,9 @@ it.each(['finish', 'cancel', 'reject'] as const)(
           expect(logged).toHaveBeenCalledTimes(1);
         }
       }
-      expect(
-        parseFloat(expectDefined(track.querySelector<HTMLElement>('.is-end')).style.left),
-      ).toBeCloseTo(17.8571428571, 6);
+      expect(expectDefined(track.querySelector<HTMLElement>('.is-end')).style.left).toBe(
+        serializedPercent(17.8571428571),
+      );
     } finally {
       release();
       h.dispose();
@@ -367,10 +368,10 @@ it.each(['start', 'end'] as const)(
     try {
       h.view.update(h.window);
       const handle = endpoint === 'start' ? h.start : h.bar;
-      expect(parseFloat(handle.style.left)).toBeCloseTo(100 / 28, 8);
+      expect(handle.style.left).toBe(serializedPercent(100 / 28));
       h.nextDay();
       h.view.update(h.window);
-      expect(parseFloat(handle.style.left)).toBeCloseTo(300 / 28, 8);
+      expect(handle.style.left).toBe(serializedPercent(300 / 28));
       expect(h.host.querySelector(`[data-timeline-part="${endpoint}"]`)).toBe(handle);
       expect(handle.getAttribute('aria-label')).toBe(
         `${endpoint === 'start' ? 'Start' : 'End'}: Not set`,
