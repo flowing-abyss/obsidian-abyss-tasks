@@ -5049,6 +5049,83 @@ it.each([true, false])(
     await pending;
   },
 );
+it.each(['recording', 'recognizing'] as const)(
+  'saves the ordinary transcript when a sibling command rolls over during %s',
+  async (phase) => {
+    const dispatched = deferred<void>(),
+      release = deferred<void>(),
+      recognition = deferred<string>();
+    const h = await setup({}, (api) => ({
+      ...api,
+      tasks: {
+        ...api.tasks,
+        create: async (...args) => {
+          dispatched.resolve();
+          await release.promise;
+          return expectDefined(api.tasks.create)(...args);
+        },
+      },
+    }));
+    vi.useFakeTimers({
+      toFake: [
+        'setInterval',
+        'clearInterval',
+        'performance',
+        'requestAnimationFrame',
+        'cancelAnimationFrame',
+      ],
+    });
+    const media = voiceMediaHarness(window);
+    h.owner.setVoiceMode('continuous');
+    h.allowOrdinaryWrites();
+    const transcribe = vi.fn(() => recognition.promise);
+    const ordinary = await h.mountCoordinator({ available: () => {}, transcribe }, () => ({
+      agent: false,
+      voice: true,
+    }));
+    const command = h.mount();
+    voiceButton(command, 'CommandMode').click();
+    enter(command, 'Prepare the parent task');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+    });
+    const id = h.owner.snapshot().id;
+    scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', approval: 'Save it' } }]);
+    enter(command, 'Save it');
+    await dispatched.promise;
+    await vi.advanceTimersByTimeAsync(300);
+    media.level(0.1);
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.waitFor(() => {
+      expect(
+        ordinary.element.querySelector('.abyss-command-waveform path')?.hasAttribute('d'),
+      ).toBe(true);
+    });
+    if (phase === 'recognizing') {
+      media.level(0);
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(transcribe).toHaveBeenCalledOnce();
+    }
+    release.resolve();
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().id).not.toBe(id);
+    });
+    if (phase === 'recording') {
+      media.level(0);
+      await vi.advanceTimersByTimeAsync(3500);
+    }
+    recognition.resolve('Independent task');
+    await vi.waitFor(() => {
+      expect(h.ordinaryExecute).toHaveBeenCalledOnce();
+    });
+    expect(ordinary.host.querySelector('.abyss-capture-input')).toBeNull();
+    const note = await h.read('a.md');
+    expect(note.match(/Parent/g)).toHaveLength(1);
+    expect(note.match(/Independent task/g)).toHaveLength(1);
+    expect(h.owner.snapshot().exchanges).toHaveLength(0);
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+  },
+);
 it.each(['stop and edit', 'one-click send'] as const)(
   'uses native task creation for standalone Voice (%s) in dictation mode',
   async (gesture) => {

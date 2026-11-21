@@ -138,7 +138,11 @@ export class CommandVoiceController {
     return this.canShowActivity() && this.capture.speaking();
   }
   private canShowActivity(): boolean {
-    return !this.options.owner.commandPending() && !this.agentBusy && !this.pending();
+    const ordinaryContinuous = this.continuous && this.options.ordinary();
+    return (
+      !this.pending() &&
+      (ordinaryContinuous || (!this.options.owner.commandPending() && !this.agentBusy))
+    );
   }
   private commandBusy(): boolean {
     return !this.options.ordinary() && (this.options.owner.commandPending() || this.agentBusy);
@@ -294,10 +298,13 @@ export class CommandVoiceController {
     if (this.jobs.length === 1) this.processNext();
   }
   private alive(basis: VoiceBasis): boolean {
+    // An ordinary Q owns its task destination across a sibling's automatic session change.
+    // Explicit retirement still invalidates the recording through its capture generation.
     return (
       !this.disposed &&
       basis.lifetime === this.generation &&
-      basis.submission.basis.sessionId === this.options.owner.snapshot().id
+      ((basis.mode === 'continuous' && this.options.ordinary()) ||
+        basis.submission.basis.sessionId === this.options.owner.snapshot().id)
     );
   }
   private processNext(): void {
