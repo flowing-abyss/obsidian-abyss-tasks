@@ -556,6 +556,9 @@ export class CommandModeSurface implements CaptureExtension {
     this.setPrimary('send', false);
     if (this.owner !== undefined) this.renderMicrophone_abyssPrivate();
   }
+  prepareOrdinarySubmit(): void {
+    if (this.capture.ordinaryVoiceInput().trim() !== '') this.voice?.stopIfWaitingForSpeech();
+  }
   pendingInput(): boolean {
     return this.voice?.active() === true || this.voice?.pending() === true;
   }

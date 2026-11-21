@@ -20,6 +20,7 @@ export interface CaptureExtension {
   edited?(): void;
   submit(): void;
   pendingInput?(): boolean;
+  prepareOrdinarySubmit?(): void;
   escape(restoreFocus?: boolean): void;
   destroy(): void;
 }
@@ -220,10 +221,7 @@ export class CaptureSurface {
       depart: () => this.depart_abyssPrivate(),
       isLive: () => !this.destroyed_abyssPrivate && (options.isLive?.() ?? true),
       submit: (trigger) => {
-        if (
-          !this.commandActive_abyssPrivate() &&
-          this.extension_abyssPrivate?.pendingInput?.() !== true
-        )
+        if (this.prepareOrdinarySubmit_abyssPrivate())
           runAsyncAction(this.controller_abyssPrivate.submit(trigger), 'Could not add task');
       },
     });
@@ -329,12 +327,14 @@ export class CaptureSurface {
     );
   }
 
+  private prepareOrdinarySubmit_abyssPrivate(): boolean {
+    if (this.commandActive_abyssPrivate()) return false;
+    this.extension_abyssPrivate?.prepareOrdinarySubmit?.();
+    return this.extension_abyssPrivate?.pendingInput?.() !== true;
+  }
+
   private depart_abyssPrivate(): boolean {
-    if (
-      !this.commandActive_abyssPrivate() &&
-      this.extension_abyssPrivate?.pendingInput?.() !== true
-    )
-      return false;
+    if (this.prepareOrdinarySubmit_abyssPrivate()) return false;
     this.extension_abyssPrivate?.escape(false);
     return true;
   }

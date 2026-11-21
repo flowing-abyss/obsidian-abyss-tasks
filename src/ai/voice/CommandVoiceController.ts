@@ -266,6 +266,9 @@ export class CommandVoiceController {
     this.recordingBasis = undefined;
     this.capture.stop();
   }
+  stopIfWaitingForSpeech(): void {
+    if (this.continuous && !this.capture.hasUtterance() && !this.pending()) this.stop();
+  }
   finish(): void {
     this.capture.finish();
   }

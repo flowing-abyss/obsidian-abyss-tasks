@@ -56,6 +56,9 @@ export class NativeVoiceCapture<B> {
     if (this.stream !== undefined) return 'listening';
     return this.recording === undefined ? 'idle' : 'finishing';
   }
+  hasUtterance(): boolean {
+    return this.recording?.basis !== undefined;
+  }
   speaking(): boolean {
     return this.speech;
   }

@@ -4977,6 +4977,59 @@ it('transcribes in ordinary Q without an agent connection or switching capture m
   expect(h.owner.snapshot().exchanges).toHaveLength(0);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
+it.each(['Enter', 'Send', 'outside'] as const)(
+  'submits a typed ordinary task with %s while Continuous is listening for speech',
+  async (gesture) => {
+    const h = await setup(),
+      media = voiceMediaWithSampleClock();
+    h.memory.active = false;
+    h.owner.setVoiceMode('continuous');
+    h.allowOrdinaryWrites();
+    const surface = await h.mountCoordinator({ available: () => {}, transcribe: async () => '' });
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+    surface.input.value = 'Typed task';
+    surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+    if (gesture === 'Enter')
+      surface.input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+    else if (gesture === 'Send') voiceButton(surface, 'Send').click();
+    else document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    await flushMicrotasks(0);
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n- [ ] Typed task ➕ 2026-08-01\n');
+    expect(surface.input.isConnected).toBe(gesture !== 'outside');
+    expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
+  },
+);
+it.each(['speech pause', 'recognition'] as const)(
+  'keeps typed and spoken ordinary input together when Enter lands during %s',
+  async (stage) => {
+    const h = await setup(),
+      media = voiceMediaWithSampleClock(),
+      recognition = deferred<string>();
+    h.memory.active = false;
+    h.owner.setVoiceMode('continuous');
+    h.allowOrdinaryWrites();
+    const surface = await h.mountCoordinator({
+      available: () => {},
+      transcribe: () => recognition.promise,
+    });
+    await sampleUtterance(media);
+    await vi.advanceTimersByTimeAsync(stage === 'recognition' ? 2500 : 100);
+    enter(surface, 'Typed task');
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    await vi.advanceTimersByTimeAsync(2500);
+    recognition.resolve('Spoken detail');
+    await flushMicrotasks(0);
+    expect(surface.input.value).toBe('Typed task Spoken detail');
+    expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+    voiceButton(surface, 'Send').click();
+    await flushMicrotasks(0);
+    expect(await h.read('a.md')).toBe(
+      '- [ ] Existing\n- [ ] Typed task Spoken detail ➕ 2026-08-01\n',
+    );
+  },
+);
 it.each(['', ' 📅 2026-10-10'])(
   'writes one ordinary task and dismisses on silence on each of two Q openings with seed %j',
   async (seed) => {
