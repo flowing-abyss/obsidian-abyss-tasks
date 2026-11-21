@@ -550,7 +550,10 @@ export class CommandSessionOwner {
   }
   private async finishSavedSession(submissionCurrent: () => boolean): Promise<boolean> {
     const next = this.session.snapshot();
-    const current = (): boolean => submissionCurrent() && this.captureClaim?.continuous() !== false;
+    const current = (): boolean =>
+      submissionCurrent() &&
+      this.session.snapshot().voiceMode === next.voiceMode &&
+      this.captureClaim?.continuous() !== false;
     if (
       !current() ||
       next.input.trim() !== '' ||

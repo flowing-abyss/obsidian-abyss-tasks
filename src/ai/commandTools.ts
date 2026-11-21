@@ -2459,7 +2459,7 @@ class CommandToolOwner {
       return { finished: true };
     }
     return {
-      finished: await this.publishReady_abyssPrivate(result, input.selection !== undefined),
+      finished: await this.publishReady_abyssPrivate(result, (input.selection?.length ?? 0) > 0),
       result,
     };
   }

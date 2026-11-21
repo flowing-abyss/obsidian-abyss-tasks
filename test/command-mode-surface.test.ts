@@ -4361,7 +4361,7 @@ it('voice failure leaves typed input and proposal available for the next deliber
   expect(transcribe).toHaveBeenCalledTimes(2);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
-it.each(['immediate', 'save and focus', 'save-then-plan'] as const)(
+it.each(['immediate', 'empty selection', 'save and focus', 'save-then-plan'] as const)(
   'starts the next session only for the terminal %s workflow',
   async (intent) => {
     const h = await setup();
@@ -4376,6 +4376,7 @@ it.each(['immediate', 'save and focus', 'save-then-plan'] as const)(
     }
     const message = {
       immediate: 'Create and save Next',
+      'empty selection': 'Create and save Next',
       'save and focus': 'Create and save Next and focus it',
       'save-then-plan': 'Save this and prepare Next',
     }[intent];
@@ -4399,6 +4400,7 @@ it.each(['immediate', 'save and focus', 'save-then-plan'] as const)(
       {
         tool: 'finish',
         input: () => {
+          if (intent === 'empty selection') return { state: 'ready', selection: [] };
           if (intent !== 'save and focus') return { state: 'ready' };
           const change = h.owner.snapshot().proposal.changes[0];
           if (change?.kind !== 'task' || change.plan.after === null)
@@ -4423,7 +4425,7 @@ it.each(['immediate', 'save and focus', 'save-then-plan'] as const)(
       expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe(
         intent === 'save and focus' ? 'saved' : 'ready',
       );
-      expect(h.owner.snapshot().id === id).toBe(intent !== 'immediate');
+      expect(h.owner.snapshot().id === id).toBe(intent === 'save and focus' || !immediate);
       expect(h.owner.snapshot().proposal.changes).toHaveLength(immediate ? 0 : 1);
     });
     expect(await h.read('a.md')).toContain(immediate ? 'Next' : 'Parent');
@@ -4507,7 +4509,12 @@ it.each(['failure', 'stop after dispatch'] as const)(
     expect(h.owner.snapshot().journal).toHaveLength(1);
   },
 );
-it.each(['complete', 'new input', 'input during history selection'] as const)(
+it.each([
+  'complete',
+  'input during interpretation',
+  'input during write',
+  'input during history selection',
+] as const)(
   'handles a terminal typed save with %s through the command surface',
   async (scenario) => {
     const h = await setup();
@@ -4535,8 +4542,8 @@ it.each(['complete', 'new input', 'input during history selection'] as const)(
     }
     const unsubscribe = h.owner.subscribe((state) => {
       if (
-        scenario === 'new input' &&
-        state.status.kind === 'writing' &&
+        ((scenario === 'input during interpretation' && state.status.kind === 'thinking') ||
+          (scenario === 'input during write' && state.status.kind === 'writing')) &&
         surface.input.value === ''
       ) {
         surface.input.value = 'Another thought';
@@ -4569,6 +4576,47 @@ it.each(['complete', 'new input', 'input during history selection'] as const)(
     } finally {
       unsubscribe();
     }
+  },
+);
+it.each(['empty Enter', 'agent confirmation'])(
+  'keeps Dictation selected during history persistence after %s',
+  async (submission) => {
+    const h = await setup();
+    const media = voiceMediaWithSampleClock();
+    h.owner.setVoiceMode('continuous');
+    const surface = h.mount({ available: () => {}, transcribe: async () => 'unused' });
+    enter(surface, 'Prepare the parent task');
+    await vi.waitFor(() => {
+      expect(h.owner.commandPending()).toBe(false);
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+    });
+    scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', approval: 'Save it' } }]);
+    const write = h.persisted.storage.write;
+    let changed = false;
+    vi.spyOn(h.persisted.storage, 'write').mockImplementation(async (key, value, previous) => {
+      if (
+        !changed &&
+        key.kind === 'state' &&
+        (JSON.parse(value) as { activeSessionId: string | null }).activeSessionId === null
+      ) {
+        changed = true;
+        h.owner.setVoiceMode('manual');
+      }
+      await write(key, value, previous);
+    });
+    enter(surface, submission === 'empty Enter' ? '' : 'Save it');
+    await vi.waitFor(() => {
+      expect(changed).toBe(true);
+      expect(h.owner.commandPending()).toBe(false);
+    });
+    expect(h.owner.snapshot().voiceMode).toBe('manual');
+    expect(media.tracks.every((track) => track.readyState === 'ended')).toBe(true);
+    expect((await h.read('a.md')).match(/Parent/g)).toHaveLength(1);
+    const reloaded = await CommandSessionStore.open({
+      ...h.persisted,
+      now: () => Date.UTC(2026, 7, 1, 12),
+    });
+    expect(reloaded.record(reloaded.activeId())?.snapshot.voiceMode).toBe('manual');
   },
 );
 it.each(['ready', 'pending'])(

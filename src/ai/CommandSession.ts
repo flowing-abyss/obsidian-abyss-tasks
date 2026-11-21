@@ -1715,7 +1715,7 @@ export class CommandSession {
   private async completeWrite_abyssPrivate(
     proposal: CommandSessionSnapshot['proposal'],
     clear: boolean,
-    inputRevision: number,
+    inputRevision: number | undefined,
     remainder?: readonly CommandChange[],
   ): Promise<void> {
     const completed: CommandSessionSnapshot = {
@@ -1754,7 +1754,7 @@ export class CommandSession {
   }
   private completedProposal_abyssPrivate(
     proposal: CommandSessionSnapshot['proposal'],
-    inputRevision: number,
+    inputRevision: number | undefined,
     changes: readonly CommandChange[],
   ): Partial<CommandSessionSnapshot> {
     return {
@@ -1784,7 +1784,9 @@ export class CommandSession {
     clear: boolean,
     selection?: CommandSelectedWrite,
   ): Promise<boolean> {
-    const inputRevision = this.inputRevision_abyssPrivate;
+    // A submitted turn already cleared its input at admission. Later typing belongs to the next turn.
+    const inputRevision =
+      this.turn_abyssPrivate === undefined ? this.inputRevision_abyssPrivate : undefined;
     const journalStart = this.state_abyssPrivate.journal.length;
     const admission = new AbortController();
     this.writeAdmission_abyssPrivate = admission;
