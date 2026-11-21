@@ -1,99 +1,258 @@
 # Architecture
 
-Abyss Tasks reads Markdown tasks from an Obsidian vault and presents them in lists, a calendar,
-project views, and Analysis. Clicking a checkbox in the inspector and approving a task edit in
-Command mode both use the task application service. Editing the note directly updates the same index.
+Abyss Tasks presents the same vault tasks in a sidebar, calendar, project views, and Analysis.
+Markdown holds the authored data. The plugin indexes it for reads and routes changes through
+application commands. Start with the flow below when a change crosses a view, the task model,
+or storage. The section for each workflow points to the tests that exercise its boundaries.
 
-## Task reads and writes
+## From a note to the screen and back
 
-[main.ts](src/main.ts) builds the task index, repository, and application service. It gives each
-view the queries and commands it needs through the [internal task API](src/tasks/index.ts).
-The task domain defines values and rules. The application layer implements use cases against
-ports. Infrastructure connects those ports to Obsidian. Presentation code imports the task API
-and leaves Markdown editing to the writers.
+```mermaid
+flowchart LR
+  Vault[Vault Markdown] -->|source and metadata events| Index[TaskIndex]
+  Index -->|snapshots| View[Panel or inspector]
+  View -->|task command| Service[TaskApplicationService]
+  Agent[Command mode] -->|versioned client| API[TaskApiProvider]
+  API -->|task operations| Service
+  Service -->|repository port| Repo[ObsidianTaskRepository]
+  Repo -->|guarded write| Vault
+  Repo -->|committed content| Index
+```
 
-1. **Read.** [TaskIndex](src/tasks/infrastructure/TaskIndex.ts) observes vault and metadata
-   changes. It parses task trees with the [Markdown codec](src/tasks/infrastructure/markdown/TaskMarkdownCodec.ts)
-   and exposes snapshots of the sources allowed by the current settings.
-2. **Edit.** A view submits a command with a reference to the selected task or subtask.
-   [TaskApplicationService](src/tasks/application/TaskApplicationService.ts) applies the task
-   rules, including status, recurrence, dependencies, and time tracking. Edits that need a
-   preview can prepare a candidate against the current source before committing.
-3. **Commit.** [ObsidianTaskRepository](src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts)
-   serializes writes per file, checks the source against the expected revision, and installs
-   committed content in the index. Views then read the accepted result. A title or line number
-   can locate a candidate. Continuing an edit after the source changes requires proof that the
-   reference still identifies the same occurrence.
+[main.ts](src/main.ts) is the Obsidian entry point. It builds the task index, repository,
+application service, and shared search service. It supplies capabilities to the views and
+releases plugin-owned services on unload. A new view receives the existing service through the
+[internal task API](src/tasks/index.ts).
 
-Moves and archives across files write the destination before removing the source. If removal
-fails, the repository reports the partial transfer. Project metadata,
-prepared note sections, note creation, and vault-wide tag renames have their own writers.
-The [storage authority roster](test/architecture/storageAuthority.ts) names each owner and the
-Obsidian operations it can use.
+- The [domain](src/tasks/domain/) owns task references, commands, status, dates, recurrence,
+  and the meaning of a change. The [application layer](src/tasks/application/) resolves targets,
+  applies those rules, and returns structured outcomes through its ports.
+- [Infrastructure](src/tasks/infrastructure/) implements the ports. The Markdown codec reads task
+  blocks, the block editor changes their source, and the Obsidian repository coordinates writes.
+  New task syntax belongs at this boundary. Some established views still consume the
+  [legacy parser](src/parser/), which can reuse the canonical codec.
+- Presentation reads snapshots and translates interactions into commands. External plugins
+  and Command mode use a separate, versioned client described [below](#public-client-and-command-mode).
 
 ## Where state lives
 
-| Data                                                     | Owner                                                                                                                                                                                                                                                      |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Task trees, comments, dependencies, tracked time         | Vault Markdown. The index and totals can be rebuilt from it.                                                                                                                                                                                               |
-| Project membership and fields                            | Project notes and configured membership rules. ProjectStore derives the list of projects and their statistics.                                                                                                                                             |
-| Preferences and saved views                              | The [settings coordinator](src/settings/persistence.ts) combines static preferences in `data.json` with versioned view preferences in `state.json`. It preserves unknown fields and suspends view-state writes if the stored format cannot be read safely. |
-| Current navigation, task selection, and inspector drafts | The view's [AppState](src/app/AppState.ts) and the controller that owns the interaction.                                                                                                                                                                   |
-| Command conversations, proposals, and write journal      | [CommandSessionStore](src/ai/CommandSessionStore.ts) keeps session files under the plugin directory for history and recovery.                                                                                                                              |
-| Provider credentials                                     | Obsidian SecretStorage. Plugin settings hold the selected connections and secret identifiers.                                                                                                                                                              |
+| Data                                                         | Durable source or current owner                                                                                                   |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Task hierarchy, fields, comments, dependencies, time entries | Vault Markdown. The index, search results, forecasts, and totals can be rebuilt.                                                  |
+| Project membership and properties                            | Project notes and configured membership rules. Each panel's ProjectStore derives its project list and statistics.                 |
+| Configuration and saved views                                | Static preferences in `data.json` and versioned view preferences in `state.json`. Both contribute to the runtime settings object. |
+| Current navigation, selection, inspector drafts and undo     | The view's AppState and interaction controllers. Their lifetime is the open view.                                                 |
+| Command conversations, proposals, write journal              | Session files in the plugin directory, managed by CommandSessionStore. They survive reopening.                                    |
+| Credentials                                                  | Obsidian SecretStorage. Settings hold provider choices and secret bindings.                                                       |
+
+### Change a setting or a saved view
+
+First decide who must remember the value. A project field definition belongs to static
+configuration, its column visibility belongs to saved view state, and the cell being edited
+belongs to the current interaction. Classify a new persisted key in the
+[settings ownership roster](test/architecture/settingsOwnership.ts) and route it through the
+[settings coordinator](src/settings/persistence.ts). Changing the configured checkbox statuses also
+updates the status catalog, the UI registry, and the index's interpretation of those symbols.
+
+The coordinator preserves unknown persisted fields. When migrating saved views, it verifies
+the new envelope before cleaning up the legacy values. If the stored view state is unreadable
+or newer than the supported schema, the plugin uses temporary defaults and suspends writes
+to that state. Static and view-state saves can fail separately. Exercise the actual coordinator
+with older data, an unknown extension, and a failed write.
+[Persistence tests](test/settings-persistence.test.ts) · [Status settings tests](test/settings-tab-statuses.test.ts)
+
+## Task changes
+
+### Edit a task after the note has changed
+
+1. [TaskIndex](src/tasks/infrastructure/TaskIndex.ts) parses accepted source with the
+   [Markdown codec](src/tasks/infrastructure/markdown/TaskMarkdownCodec.ts). List-item metadata
+   helps discovery. Authored tasks can still exist when the host cache omits them. Queries
+   return detached snapshots within the current source policy.
+2. The view captures the chosen occurrence, including the parent chain for a subtask.
+   [TaskApplicationService](src/tasks/application/TaskApplicationService.ts) resolves that
+   reference, validates the command, and delegates the write to the repository. A title,
+   checkbox position, or search result can help a person find a task. None uniquely identifies
+   an identically named sibling after an edit.
+3. [ObsidianTaskRepository](src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts) checks the
+   write against current source and serializes mutations per file. After committing, it installs
+   the resulting content in the index. Subsequent Obsidian events reconcile the note through
+   the same source model. [TaskRefAuthority](src/tasks/infrastructure/TaskRefAuthority.ts)
+   tracks which occurrences can be followed across accepted changes.
+4. The initiating view handles the outcome. A missing or ambiguous target, a revision conflict,
+   and a successful write require different feedback. A later selection belongs to the user.
+   An earlier write may complete, but its callback must still prove ownership before updating
+   the inspector or revealing a task.
+
+For a new editable field, follow the command from its [domain definition](src/tasks/domain/commands.ts)
+through application validation to the [block editor](src/tasks/infrastructure/markdown/TaskBlockEditor.ts).
+Check the exact Markdown after editing a nested task, including untouched sibling content.
+For a staged edit, the [preparation API](src/tasks/application/TaskEditPreparationApi.ts)
+produces the before/after tree in memory. An intervening source change can invalidate a plan.
+Refreshing it requires proof that the reviewed edit still applies.
+[Codec tests](test/tasks/markdown-codec.test.ts) · [Reference tests](test/tasks/task-ref-authority.test.ts) · [Plan refresh tests](test/tasks/task-preparation-refresh.test.ts)
+
+If Command mode should edit that field, also follow the [public patch validator](src/integrations/taskContentValidation.ts)
+and the [model-facing schema](src/ai/commandSchemas.ts). Each controls which fields its callers
+can send. A field that saves from the inspector can still be rejected at either boundary.
+Test selecting it from a larger proposal and confirm that the other fields remain pending.
+[Public field-selection tests](test/public-api-content-selection.test.ts)
+
+### Create a task or change completion behavior
+
+Capture asks the application to plan a destination, such as the configured task file or today's
+note. The retained creation session carries the destination, insertion policy, and settings
+used for the preview. Submitting freezes that request independently of later typing.
+[NoteTemplateService](src/notes/NoteTemplateService.ts) prepares a required note at execution.
+After creation, the view can reveal the accepted task. If the write outcome is unknown, the
+user needs to inspect the destination before retrying.
+[Capture controller](src/ui/taskCapture/TaskCaptureController.ts) · [Capture tests](test/task-capture-controller.test.ts)
+
+Completion can affect more than the checkbox. The application checks dependencies, applies the
+configured recurrence behavior, and closes affected running timers through the tracking service.
+A failed timer follow-up can leave the status change committed. Use the existing status command
+from every surface that changes completion, and report the actual effects. Changing a checkbox
+directly in Markdown causes the index to reread it without replaying those command side effects.
+[Dependency service](src/tasks/application/TaskDependencyService.ts) · [Status follow-up tests](test/tasks/task-status-follow-up.test.ts)
+
+### Move, archive, or change which component writes
+
+Moves and archives across notes write the destination before removing the source. An unknown
+destination outcome leaves the source untouched. If the destination is confirmed and source
+removal fails, the [move result handler](src/ui/taskCommandResult.ts) opens recovery. The
+[recovery modal](src/ui/TaskMoveRecoveryModal.ts) resolves the original task before offering to
+delete it. If its revision changed, removal needs renewed user acceptance. If the recovery
+delete has an unknown outcome, the user must inspect both notes before retrying.
+[Repository move contract](test/tasks/task-repository-move-contract.test.ts) · [Recovery UI tests](test/task-move-recovery-ui.test.ts)
+
+Use [TaskHierarchyService](src/tasks/application/TaskHierarchyService.ts) for reparenting and
+promotion. For other text writes, follow the owner of that part of the file. ProjectManager owns
+project metadata, NoteApplicationService guards prepared prose sections and preserves task blocks
+and frontmatter, NoteTemplateService handles note creation, and TagManager owns global tag renames.
+The [storage authority roster](test/architecture/storageAuthority.ts) names each authorized
+writer and host API. A new acquisition needs a narrowly scoped reason and tests for both
+acceptance and rejection.
 
 ## Views and derived data
 
-[PanelView](src/views/PanelView.ts) owns the sidebar, its state, and the lifetime of its panels.
-The rail switches modes. The left panel handles navigation. The center panel hosts the task
-collection, calendar, project, and Analysis surfaces. The right panel owns the task inspector,
-including edits, drafts, and undo. [TaskModal](src/ui/TaskModal.ts) reuses that inspector with
-its own selection. Task cards and the inspector capture the node the user acted on so a later
-selection change cannot redirect that action.
+[PanelView](src/views/PanelView.ts) owns the sidebar and its lifetime. The rail switches modes,
+the left panel handles navigation, and the center hosts task collections, calendar, projects,
+search, and Analysis. The right panel owns inspector edits, drafts, and undo.
+[TaskModal](src/ui/TaskModal.ts) reuses that inspector with its own selection. Reuse the
+[task menu](src/ui/taskContextMenu.ts), card renderer, and panel commands when exposing an
+existing action on another surface. Capture the clicked node when constructing the action.
+Opening a menu on one task must still target that task if the inspector selection later changes.
+[Menu tests](test/task-menus.test.ts) · [Inspector writer tests](test/right-panel-writers.test.ts) · [Inspector history tests](test/inspector-history-transitions.test.ts)
 
-- **Search** reads an index feed through [TaskSearchService](src/tasks/infrastructure/search/TaskSearchService.ts).
-  The service returns compact matches. Views request current task snapshots for the rows they
-  display and discard stale matches.
-- **Calendar** [projects recurring tasks](src/views/calendarOccurrences.ts) onto future dates.
-  A forecast has no saved occurrence of its own. Editing the series targets its source task.
-- **Projects** use [ProjectStore](src/projects/ProjectStore.ts) to derive membership from paths,
-  tags, and frontmatter. [ProjectManager](src/projects/ProjectManager.ts) creates project notes
-  and writes their metadata. Moving a task between projects uses the task application service.
-- **Analysis** subscribes to a [statistics projection](src/tasks/infrastructure/TaskStatisticsProjection.ts)
-  while it needs data. That projection can include permitted archive records without adding them
-  to ordinary task lists. It reports gaps in coverage alongside the totals.
+**Collections and search.** List, Kanban, and Timeline share the task list surface and card
+interactions. Logical rows own order and selection. Only a window of those rows may have DOM
+elements. [TaskSearchService](src/tasks/infrastructure/search/TaskSearchService.ts) retrieves
+compact matches. The view asks it to resolve visible hits against the current index. Stale
+addresses are discarded.
+Change text matching in [searchMatchPolicy](src/tasks/domain/searchMatchPolicy.ts), list membership
+in [taskNodeMembership](src/task-lists/taskNodeMembership.ts), and display in the
+[search surface](src/panels/center/TaskSearch.ts). Global search returns roots. A task-list
+filter can surface an eligible descendant. Preserve that distinction when changing results.
+[Search service tests](test/tasks/task-search-service.test.ts) · [Descendant selection tests](test/task-search-organization.test.ts)
 
-## Command mode and integrations
+**Calendar.** [Calendar occurrences](src/views/calendarOccurrences.ts) project saved tasks and
+recurrence forecasts onto dates. A forecast has no editable occurrence of its own. Explicit
+series edits target the source task. A drag or keyboard edit captures the task under the
+gesture and goes through [calendar commands](src/panels/calendar/calendarCommands.ts).
+Queued edits require proof that they still apply to the original target.
+[Projection tests](test/calendar-occurrences.test.ts) · [Queued edit after an unverified write](test/calendar-publication.test.ts)
+
+**Projects and Analysis.** [ProjectStore](src/projects/ProjectStore.ts) derives membership from
+paths, tags, and frontmatter. Table, Kanban, and Timeline share field definitions and model logic.
+[ProjectManager](src/projects/ProjectManager.ts) checks expected metadata when committing a field
+edit. Moving a task into a project uses the task application service. Pure project models take
+explicit time and data. Analysis consumes a separate [statistics projection](src/tasks/infrastructure/TaskStatisticsProjection.ts)
+that can include permitted archive evidence without introducing archived tasks into ordinary
+lists. It reports gaps in coverage alongside totals.
+[Project write tests](test/project-integration-writes.test.ts) · [Statistics source tests](test/tasks/task-statistics-source.test.ts)
+
+## Public client and Command mode
 
 External plugins open a versioned client with `getApi(1, { consumerId })`. Command mode uses the
 same [provider](src/integrations/TaskApiProvider.ts) for task, project, and note operations.
-Clients receive opaque targets and revisions. A prepared change refers to the version the client
-reviewed. After a provider reload, consumers resolve targets again. Calling `client.dispose()`
-releases subscriptions and pending reads.
-[Public API guide](API.md) · [TypeScript contract](api.d.ts)
+Clients receive opaque targets and revisions. Targets can expire and must be resolved again
+after a provider reload. Disposing the client releases subscriptions and pending reads. Source
+coverage matters. A lookup with incomplete coverage or more pages to read cannot establish absence.
+[API guide](API.md) · [External contract](api.d.ts) · [Identity tests](test/public-api-identity.test.ts)
 
-The first use of Command mode opens a [session owner](src/ai/CommandSessionOwner.ts) shared by
-the plugin's panels and popouts. Adding a task from a menu checks its native reference, adds the
-verified task to the session, and opens the composer. The model runs when the user submits a
-command. It receives the working selection and bounded session context. Before admitting web
-research, the agent checks the current request and recent user messages for permission. Notes
-and web pages supply evidence only. Write approval comes from the user.
+### Add an operation to Command mode
 
-The [command agent](src/ai/CommandAgent.ts) calls tools to read current data and prepare a
-proposal. The user can review it in the panel and confirm that revision. A request to save
-through the model also requires a check of what the user authorized. The
-[write coordinator](src/ai/commandWrites.ts) journals an operation before dispatch and checks
-the receipt and resulting state before reporting it saved. If a write may have taken effect,
-the session keeps the evidence for recovery. [Command evaluation guide](COMMAND_EVALUATION.md)
+[CommandSessionOwner](src/ai/CommandSessionOwner.ts) coordinates the session shared by panels
+and popouts. Adding a task from a menu verifies its native reference and adds it to working
+focus. Opening the composer does not submit a turn. When the user submits, the
+[agent](src/ai/CommandAgent.ts) receives the instruction, working selection, and bounded
+session context.
 
-Model, voice, and web research connections are configured separately. The desktop ChatGPT
-subscription connection uses its own sign-in. [Provider adapters](src/ai/providers/) use the
-selected connection for each role. Research distinguishes search excerpts from page content
-retrieved through a provider that supports reading URLs.
+Start with the existing public operation. The [tool adapter](src/ai/commandTools.ts) translates
+model arguments into reads or preparations. [CommandReferenceBook](src/ai/CommandReferenceBook.ts)
+binds the model's short edit references to this turn, their owner, and the saved revision or
+pending plan. When adding an edit, keep those references out of persisted state.
+[commandReads](src/ai/commandReads.ts) reads both sides of the prepared plan to completion at
+the plan revision before staging. A first page alone can omit children or comments from review.
 
-## Checking boundaries
+If the user specified a file and line and lookup fails, dropping the
+line and editing a similarly named task is unsafe. An incomplete result calls for a narrower
+read. A complete result with no match can support a clarification.
 
-[Dependency rules](dependency-cruiser.config.cjs) and [architecture tests](test/architecture-boundaries.test.ts)
-enforce import direction. The [settings ownership roster](test/architecture/settingsOwnership.ts)
-classifies persisted keys. Run `pnpm verify` for the full gate. The [contributor instructions](AGENTS.md)
-cover writable UI checks in the test vault and the [performance guide](PERFORMANCE.md) covers profiling.
+A successful tool call proves only what that operation did. [CommandEvidence](src/ai/CommandEvidence.ts)
+tracks accepted results within the turn. [CommandPendingOperations](src/ai/CommandPendingOperations.ts)
+tracks rejected operations that still need repair. An unrelated successful edit cannot clear one.
+When adding a command, test the intended final state, the owner, and unrelated data.
+Include a case that produces a plausible answer while leaving part of the request undone.
+[Agent tests](test/command-agent.test.ts) · [Evaluation workflow](COMMAND_EVALUATION.md)
+
+### Change confirmation or recovery
+
+Ordinary creation and edits produce a reviewable proposal. Confirmation binds to the session
+and the proposal revision the user reviewed. If the user approves only one field or one task,
+the [authorization check](src/ai/commandWriteAuthorization.ts) evaluates that instruction against
+the displayed owners and before/after values. For example, “save the description” must leave
+pending comments and date changes in the proposal. [commandSelection](src/ai/commandSelection.ts) checks revisions and
+dependencies and prepares the approved subset through the public client. After a partial
+field save, the committed request ID anchors the refresh of that task's remaining edits.
+If that fails, the session retains the receipt and blocks a repeat save. Empty Enter follows the panel's confirmation path. An explicit instruction to
+save new work immediately has a separate check on the completed proposal.
+
+The [write coordinator](src/ai/commandWrites.ts) records admitted work in the journal before
+dispatch. Stop prevents the next batch operation. A request already dispatched may still
+commit after Stop or after the panel closes. Receipts and readback
+establish what actually changed. If a write committed but its readback failed, keep its
+record, surface the uncertainty, and check the current state before taking further action.
+[CommandSessionStore](src/ai/CommandSessionStore.ts) persists proposals and journal entries
+under the plugin directory. Recovery inspects individual resource outcomes, even if the overall
+receipt says committed. Acknowledging uncertainty lets the user begin independent work while
+the unresolved record stays in history. Restored handles must be verified before a new edit.
+[Field selection tests](test/tasks/task-field-selection.test.ts) · [Approval tests](test/command-write-review.test.ts) · [Partial saves and cancellation](test/command-session.test.ts) · [Recovery tests](test/command-recovery.test.ts) · [Store tests](test/command-session-store.test.ts)
+
+### Change providers or research
+
+Model, voice, and web research connections have separate selections. Credentials go through
+Obsidian SecretStorage. The desktop ChatGPT subscription uses its own sign-in. Preserve the
+connection the user selected, including its billing route. Before allowing web research, the
+agent checks the current request and recent user messages. A page, task comment, or search
+result is evidence and cannot authorize a new external request or a task write.
+
+[ProviderResearch](src/ai/providers/ProviderResearch.ts) separates searching for a source from
+reading a known URL through a provider that supports extraction. Preserve attribution, failures,
+and truncation so a snippet cannot stand in for a page the user asked to read. Record the
+requested URL and the URL returned by the provider separately. That metadata cannot verify
+the final redirect or the freshness of the page.
+[Page-reading tests](test/command-page-reading.test.ts) · [Live evaluation procedure](COMMAND_EVALUATION.md)
+
+## Verifying a change
+
+Use `pnpm verify:task` during development and `pnpm verify` before integration. Import direction
+is enforced by the [dependency rules](dependency-cruiser.config.cjs) and
+[architecture tests](test/architecture-boundaries.test.ts). For UI work, exercise the actual
+interaction in `dev-vault-tasks`, inspect the DOM and screenshots, and check runtime errors.
+For performance-sensitive changes, compare the same workload before and after.
+[Repository instructions](AGENTS.md) · [Performance guide](PERFORMANCE.md)
+
+Update this map when a change moves ownership, crosses a public boundary, changes where data
+is stored, or changes how an edit reaches a verified result. Keep operation schemas with the
+public contract and regression examples in the tests linked from the workflow they protect.
