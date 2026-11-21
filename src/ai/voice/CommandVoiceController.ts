@@ -23,6 +23,7 @@ export interface CommandVoiceOptions {
   readonly window: Window & typeof window;
   readonly transcription: CommandTranscriptionPort;
   mode(): 'manual' | 'continuous';
+  ordinary(): boolean;
   continuousAvailable(): boolean;
   input(): string;
   retain(text: string): void;
@@ -96,9 +97,7 @@ export class CommandVoiceController {
       const newFailure = failure && !failed;
       if (failure !== failed) this.stopOnCommandError = failure && this.continuous;
       failed = failure;
-      const changedSession = state.id !== this.sessionId;
-      this.sessionId = state.id;
-      if (changedSession) this.stop();
+      const changedSession = this.updateSession(state.id);
       const preference = state.voiceMode ?? 'manual',
         changedPreference = preference !== previousPreference;
       previousPreference = preference;
@@ -114,6 +113,12 @@ export class CommandVoiceController {
       }
       this.syncContinuous();
     });
+  }
+  private updateSession(id: string): boolean {
+    if (id === this.sessionId) return false;
+    this.sessionId = id;
+    if (!this.options.owner.continuesCapture(this.options.visibility)) this.stop();
+    return true;
   }
   private changed(): void {
     if (!this.continuous && !this.capture.active() && !this.pending()) {
@@ -133,10 +138,10 @@ export class CommandVoiceController {
     return this.canShowActivity() && this.capture.speaking();
   }
   private canShowActivity(): boolean {
-    return !this.commandBusy() && !this.pending();
+    return !this.options.owner.commandPending() && !this.agentBusy && !this.pending();
   }
   private commandBusy(): boolean {
-    return this.options.owner.commandPending() || this.agentBusy;
+    return !this.options.ordinary() && (this.options.owner.commandPending() || this.agentBusy);
   }
   pending(): boolean {
     return this.jobs.length > 0;
@@ -174,7 +179,12 @@ export class CommandVoiceController {
       else this.finish();
       return;
     }
-    if (mode === 'continuous') this.startContinuous(true);
+    if (this.options.ordinary() && !this.options.owner.canStartManual(this.options.visibility)) {
+      this.message = commandMessage('Continuous voice is active in another panel.');
+      this.changed();
+      return;
+    }
+    if (mode === 'continuous') this.startContinuous(!this.options.ordinary());
     else this.startCapture(mode).catch(this.failed);
   }
   private async startCapture(mode: 'manual' | 'continuous'): Promise<void> {
@@ -195,7 +205,7 @@ export class CommandVoiceController {
     this.continuous &&
     this.releaseClaim !== undefined &&
     !this.options.window.document.hidden &&
-    !this.options.owner.commandPending() &&
+    !this.commandBusy() &&
     this.options.owner.captureSubmission(this.options.visibility).current() &&
     this.options.continuousAvailable();
   private claim(): void {
@@ -244,7 +254,7 @@ export class CommandVoiceController {
     return (
       this.options.mode() !== 'continuous' ||
       this.options.window.document.hidden ||
-      (this.stopOnCommandError && !busy)
+      (this.stopOnCommandError && !busy && !this.options.ordinary())
     );
   }
   private pauseForWork(): void {
@@ -318,6 +328,21 @@ export class CommandVoiceController {
     }
     if (job.basis.mode === 'manual' || this.options.mode() !== job.basis.mode) {
       return this.deliverDictation(job.basis, text);
+    }
+    if (this.options.ordinary()) {
+      this.continuous = false;
+      const current = job.basis.edit === this.edit && this.options.input().trim() === '';
+      this.retainText(text);
+      if (current)
+        return () => {
+          this.options.send(
+            text,
+            job.basis.submission.basis,
+            () => this.alive(job.basis) && this.edit === job.basis.edit,
+          );
+        };
+      this.message = commandMessage('Voice kept as text. Review before sending.');
+      return;
     }
     this.submitVoice(job.basis, text).catch(this.failed);
     return undefined;

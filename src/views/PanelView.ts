@@ -136,6 +136,7 @@ interface PanelLayoutElements {
 }
 
 export interface PanelCommandServices {
+  readonly knownVoiceMode?: () => 'manual' | 'continuous' | undefined;
   readonly availability?: () => { agent: boolean; voice: boolean };
   readonly transcription?: CommandTranscriptionPort;
   readonly owner: () => CommandSessionOwner | Promise<CommandSessionOwner>;
@@ -1069,6 +1070,9 @@ export class PanelView extends ItemView {
                 new CommandModeSurface(capture, {
                   app: this.app,
                   owner: command.owner,
+                  ...(command.knownVoiceMode === undefined
+                    ? {}
+                    : { knownVoiceMode: command.knownVoiceMode }),
                   availabilityRevision: () =>
                     latestSettingsSaveRevision(this.settings_abyssPrivate),
                   ...(command.availability === undefined

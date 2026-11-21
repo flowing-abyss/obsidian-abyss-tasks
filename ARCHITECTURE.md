@@ -103,6 +103,9 @@ Test selecting it from a larger proposal and confirm that the other fields remai
 Capture asks the application to plan a destination, such as the configured task file or today's
 note. The retained creation session carries the destination, insertion policy, and settings
 used for the preview. Submitting freezes that request independently of later typing.
+With Continuous voice enabled, ordinary Q submits one transcript through this creation session
+and closes after a successful write. In Command Mode, speech goes to the command queue and
+the listening surface resumes after a save starts a fresh session.
 [NoteTemplateService](src/notes/NoteTemplateService.ts) prepares a required note at execution.
 After creation, the view can reveal the accepted task. If the write outcome is unknown, the
 user needs to inspect the destination before retrying.

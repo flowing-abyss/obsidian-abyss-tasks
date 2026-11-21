@@ -93,7 +93,7 @@ function canProjectEmptyInput(state: TaskInputState, preview: TaskCreatePreview)
 type CaptureEditKind = 'input' | 'paste' | 'composition' | 'history';
 
 export type CapturePhase = 'idle' | 'submitting' | 'error' | 'closed';
-export type CaptureSubmitCause = 'enter' | 'blur';
+export type CaptureSubmitCause = 'enter' | 'blur' | 'voice';
 
 export interface CaptureSnapshot {
   readonly phase: CapturePhase;
@@ -886,7 +886,7 @@ export class TaskCaptureController {
     description: CreationResultDescription,
   ): boolean {
     if (description.kind === 'success') {
-      const shouldClose = submission.cause === 'blur' || this.closeAfterSuccess_abyssPrivate;
+      const shouldClose = submission.cause !== 'enter' || this.closeAfterSuccess_abyssPrivate;
       this.draft_abyssPrivate = this.target.draftSeed ?? '';
       if (shouldClose) {
         this.phase_abyssPrivate = 'closed';

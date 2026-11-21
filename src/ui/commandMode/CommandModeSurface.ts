@@ -41,6 +41,7 @@ export interface CommandModeOptions extends Pick<
 > {
   readonly app: App;
   readonly availability?: () => { agent: boolean; voice: boolean };
+  readonly knownVoiceMode?: () => 'manual' | 'continuous' | undefined;
   readonly availabilityRevision?: () => number;
   readonly transcription?: CommandTranscriptionPort;
   readonly owner: () => CommandSessionOwner | Promise<CommandSessionOwner>;
@@ -337,8 +338,27 @@ export class CommandModeSurface implements CaptureExtension {
           this.setPrimary('send', true);
         },
       );
-    } else this.deactivateCommand_abyssPrivate();
+    } else {
+      this.deactivateCommand_abyssPrivate();
+      this.openOrdinaryVoice_abyssPrivate(generation);
+    }
     if (!this.initializing_abyssPrivate) this.capture.refresh();
+  }
+  private openOrdinaryVoice_abyssPrivate(generation: number): void {
+    if (
+      this.initializing_abyssPrivate &&
+      this.microphone_abyssPrivate.hidden === false &&
+      this.options.knownVoiceMode?.() !== 'manual'
+    ) {
+      this.withOwner(
+        (owner) => {
+          if (owner.snapshot().voiceMode !== 'continuous') return;
+          this.activateOwner_abyssPrivate(owner);
+          this.startContinuous_abyssPrivate();
+        },
+        () => generation === this.modeGeneration_abyssPrivate,
+      );
+    }
   }
   private retirePreviousInput_abyssPrivate(active: boolean): void {
     if (active) {
@@ -466,11 +486,12 @@ export class CommandModeSurface implements CaptureExtension {
       window: win,
       transcription: this.options.transcription,
       mode: () => this.voiceMode(),
+      ordinary: () => !this.active(),
       continuousAvailable: () => {
         this.updateAvailability_abyssPrivate();
         return this.voiceMode() === 'continuous';
       },
-      input: () => this.capture.input.value,
+      input: () => (this.active() ? this.capture.input.value : this.capture.ordinaryVoiceInput()),
       retain: (text) => {
         this.inputGeneration_abyssPrivate++;
         if (this.active()) this.owner?.setInput(text);
@@ -494,7 +515,7 @@ export class CommandModeSurface implements CaptureExtension {
             this.submitText(text, basis, admission),
             commandMessage('Could not run command'),
           );
-        else this.capture.submitOrdinary();
+        else this.capture.submitOrdinary(this.voiceMode() === 'continuous' ? 'voice' : undefined);
       },
       activity: (samples, listening) => {
         const speaking = String(samples !== undefined);
@@ -518,17 +539,11 @@ export class CommandModeSurface implements CaptureExtension {
     this.renderMicrophone_abyssPrivate();
   }
   private startContinuous_abyssPrivate(): void {
-    if (
-      this.microphone_abyssPrivate.hidden === false &&
-      this.toggle.hidden === false &&
-      this.voice !== undefined
-    )
+    if (this.microphone_abyssPrivate.hidden === false && this.voice !== undefined)
       this.voice.startContinuous();
   }
   private voiceMode(): 'manual' | 'continuous' {
-    return this.active() &&
-      this.toggle.hidden === false &&
-      this.microphone_abyssPrivate.hidden === false
+    return this.microphone_abyssPrivate.hidden === false
       ? (this.owner?.snapshot().voiceMode ?? 'manual')
       : 'manual';
   }
@@ -567,11 +582,7 @@ export class CommandModeSurface implements CaptureExtension {
   }
   private describeMicrophone_abyssPrivate(mode: 'manual' | 'continuous'): void {
     const status = this.voice?.status();
-    const message =
-      status?.message ??
-      commandMessage(
-        this.toggle.hidden === true ? 'Microphone' : 'Microphone · right-click for input mode',
-      );
+    const message = status?.message ?? commandMessage('Microphone · right-click for input mode');
     const parts = [commandMessage(mode === 'continuous' ? 'Continuous' : 'Dictation'), message];
     const queued = this.owner?.queuedVoice() ?? 0;
     if (queued > 0) parts.push(`${queued} ${commandMessage('queued')}`);
@@ -993,9 +1004,9 @@ export class CommandModeSurface implements CaptureExtension {
     });
   }
   private canOpenMenu_abyssPrivate(trigger: HTMLElement): boolean {
-    return (
-      this.toggle.hidden === false || (this.active() && trigger !== this.microphone_abyssPrivate)
-    );
+    return trigger === this.microphone_abyssPrivate
+      ? trigger.hidden === false
+      : this.toggle.hidden === false || this.active();
   }
   private populateVoiceMenu_abyssPrivate(menu: Menu, owner: CommandSessionOwner): void {
     for (const [mode, label] of [
@@ -1008,7 +1019,7 @@ export class CommandModeSurface implements CaptureExtension {
           .setChecked(this.voiceMode() === mode)
           .onClick(() => {
             if (mode === 'manual' && this.voiceMode() === 'continuous') this.voice?.stop();
-            this.setActive(true, 'preference');
+            this.activateOwner_abyssPrivate(owner);
             owner.setVoiceMode(mode, this.visibility);
           }),
       );

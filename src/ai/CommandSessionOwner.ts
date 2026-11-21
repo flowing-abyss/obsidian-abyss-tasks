@@ -68,6 +68,12 @@ export class CommandSessionOwner {
   private readonly ownedSessions = new Set<string>();
   private readonly noteReviews = new Map<symbol, CommandNoteReview>();
   private captureClaim: CaptureClaim | undefined;
+  private continuingClaim: CaptureClaim | undefined;
+  continuesCapture(visibility: symbol): boolean {
+    return (
+      this.continuingClaim?.visibility === visibility && this.continuingClaim === this.captureClaim
+    );
+  }
   private preferenceOrigin: symbol | undefined;
   private voiceTurn: { readonly visibility: symbol | undefined } | undefined;
   claimCapture(claim: CaptureClaim): () => void {
@@ -553,10 +559,17 @@ export class CommandSessionOwner {
     )
       return false;
     this.retireVoice();
-    this.stopCapture();
-    const started = await this.session.newSession(undefined, undefined, { current });
-    if (!started && !current() && this.session.snapshot().id === next.id) await this.flush();
-    return started;
+    this.continuingClaim = this.captureClaim;
+    try {
+      const started = await this.session.newSession(undefined, undefined, {
+        current,
+        ...(this.continuingClaim === undefined ? {} : { voiceMode: 'continuous' }),
+      });
+      if (!started && !current() && this.session.snapshot().id === next.id) await this.flush();
+      return started;
+    } finally {
+      this.continuingClaim = undefined;
+    }
   }
   private async saveToFinish(revision: number, surface?: symbol): Promise<boolean> {
     const submitted = ++this.submitted;

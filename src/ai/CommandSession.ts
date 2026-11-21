@@ -361,10 +361,12 @@ export class CommandSession {
   constructor(private readonly options_abyssPrivate: CommandSessionOptions) {
     this.state_abyssPrivate = this.empty_abyssPrivate();
   }
-  private empty_abyssPrivate(): CommandSessionSnapshot {
+  private empty_abyssPrivate(
+    voiceMode = this.options_abyssPrivate.defaultVoiceMode?.() ?? 'manual',
+  ): CommandSessionSnapshot {
     return {
       id: this.options_abyssPrivate.id(),
-      voiceMode: this.options_abyssPrivate.defaultVoiceMode?.() ?? 'manual',
+      voiceMode,
       input: '',
       focus: [],
       context: this.options_abyssPrivate.context ?? '',
@@ -1895,7 +1897,11 @@ export class CommandSession {
   async newSession(
     disposition?: 'keep' | 'discard',
     signal?: AbortSignal,
-    options: { acknowledgeUncertainty?: boolean; current?: () => boolean } = {},
+    options: {
+      acknowledgeUncertainty?: boolean;
+      current?: () => boolean;
+      voiceMode?: 'continuous';
+    } = {},
   ): Promise<boolean> {
     if (!(await this.transitionAllowed_abyssPrivate(signal))) return false;
     if (options.acknowledgeUncertainty !== true && !this.canLeaveUncertainty()) return false;
@@ -1910,7 +1916,7 @@ export class CommandSession {
       disposition,
       options.acknowledgeUncertainty,
     );
-    const next = this.empty_abyssPrivate();
+    const next = this.empty_abyssPrivate(options.voiceMode);
     return this.startSession_abyssPrivate(
       archived,
       disposition === 'discard' && !this.state_abyssPrivate.blocked

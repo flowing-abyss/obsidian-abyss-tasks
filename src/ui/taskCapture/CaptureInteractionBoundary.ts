@@ -1,3 +1,4 @@
+import type { CaptureSubmitCause } from './TaskCaptureController';
 type SubmitTrigger = 'enter' | 'blur';
 type Settlement = {
   readonly flush?: (trigger: SubmitTrigger) => 'ready' | 'blocked';
@@ -12,7 +13,7 @@ type ExitEvidence =
   | { readonly type: 'focus'; readonly relatedTarget: EventTarget | null };
 interface BoundaryCallbacks {
   readonly flushInput: () => 'ready' | 'blocked';
-  readonly submit: (trigger: SubmitTrigger) => void;
+  readonly submit: (trigger: CaptureSubmitCause) => void;
   readonly depart?: () => boolean;
   readonly isLive: () => boolean;
 }
@@ -66,8 +67,8 @@ export class CaptureInteractionBoundary {
     this.schedule();
   }
 
-  requestSubmit(): void {
-    this.settle('enter');
+  requestSubmit(cause: 'enter' | 'voice' = 'enter'): void {
+    this.settle('enter', cause);
   }
 
   beginComposition(): void {
@@ -106,7 +107,7 @@ export class CaptureInteractionBoundary {
     if (this.timer !== undefined) this.window.clearTimeout(this.timer);
     this.timer = undefined;
   }
-  private settle(trigger: SubmitTrigger): void {
+  private settle(trigger: SubmitTrigger, cause: CaptureSubmitCause): void {
     if (this.destroyed || this.composing || this.settling || !this.callbacks.isLive()) return;
     this.cancelExit();
     this.settling = true;
@@ -114,7 +115,7 @@ export class CaptureInteractionBoundary {
       for (const child of [...this.surfaces.values()])
         if (child.flush?.(trigger) === 'blocked') return;
       if (this.depart(trigger)) return;
-      if (this.callbacks.flushInput() === 'ready') this.callbacks.submit(trigger);
+      if (this.callbacks.flushInput() === 'ready') this.callbacks.submit(cause);
     } finally {
       this.settling = false;
     }
@@ -127,7 +128,7 @@ export class CaptureInteractionBoundary {
     this.timer = this.window.setTimeout(() => {
       this.timer = undefined;
       if (!this.pendingExit || this.composing || this.destroyed || !this.callbacks.isLive()) return;
-      this.settle('blur');
+      this.settle('blur', 'blur');
     }, 0);
   }
 }

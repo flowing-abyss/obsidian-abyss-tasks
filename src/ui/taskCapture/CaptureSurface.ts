@@ -30,7 +30,8 @@ export interface CaptureExtensionHost {
   readonly input: HTMLTextAreaElement | HTMLInputElement;
   readonly registerSurface: (surface: HTMLElement) => () => void;
   readonly refresh: () => void;
-  readonly submitOrdinary: () => void;
+  readonly submitOrdinary: (cause?: 'voice') => void;
+  readonly ordinaryVoiceInput: () => string;
   readonly replaceOrdinaryInput: (text: string) => void;
 }
 export interface CaptureSurfaceOptions {
@@ -127,9 +128,11 @@ export class CaptureSurface {
       refresh: () => {
         this.render_abyssPrivate(this.controller_abyssPrivate.snapshot());
       },
-      submitOrdinary: () => this.boundary_abyssPrivate?.requestSubmit(),
+      submitOrdinary: (cause) => this.boundary_abyssPrivate?.requestSubmit(cause),
+      ordinaryVoiceInput: () => (this.untouchedSeed_abyssPrivate() === '' ? this.input.value : ''),
       replaceOrdinaryInput: (text) => {
-        this.controller_abyssPrivate.setDraft(text.replaceAll(/[\r\n]+/gu, ' '), {
+        const draft = text + this.untouchedSeed_abyssPrivate();
+        this.controller_abyssPrivate.setDraft(draft.replaceAll(/[\r\n]+/gu, ' '), {
           editKind: 'paste',
         });
       },
@@ -138,6 +141,11 @@ export class CaptureSurface {
     this.bindInput_abyssPrivate(options);
 
     this.subscribe_abyssPrivate();
+  }
+
+  private untouchedSeed_abyssPrivate(): string {
+    const seed = this.controller_abyssPrivate.target.draftSeed;
+    return this.input.value === seed && this.controller_abyssPrivate.isEmpty() ? seed : '';
   }
 
   private createInput_abyssPrivate(

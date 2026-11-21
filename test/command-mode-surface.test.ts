@@ -307,6 +307,7 @@ async function setup(
           ...(availability === undefined ? {} : { availability }),
           availabilityRevision: () => settingsRevision,
           owner: resolveOwner,
+          knownVoiceMode: () => owner.snapshot().voiceMode,
           memory,
           context: () => 'Tasks view',
           registry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
@@ -327,6 +328,7 @@ async function setup(
   const mountCoordinator = async (
     transcription?: CommandTranscriptionPort,
     availability?: () => { agent: boolean; voice: boolean },
+    draftSeed?: string,
   ) => {
     const coordinatedHost = document.body.createDiv();
     const coordinator = new QuickCaptureCoordinator({
@@ -335,6 +337,7 @@ async function setup(
       context: () => ({ type: 'list', selection: 'inbox' }),
       resolveTarget: async (context) => ({
         label: 'Inbox',
+        ...(draftSeed === undefined ? {} : { draftSeed }),
         context,
         markdownPrefix: '',
         markdownSuffixes: [],
@@ -353,6 +356,7 @@ async function setup(
             ...(transcription === undefined ? {} : { transcription }),
             ...(availability === undefined ? {} : { availability }),
             owner: resolveOwner,
+            knownVoiceMode: () => owner.snapshot().voiceMode,
             memory,
             context: () => 'Tasks view',
             registry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
@@ -4670,7 +4674,7 @@ it.each(['recording', 'recognizing', 'continuous listening'] as const)(
     await dispatched.promise;
     if (phase === 'continuous listening') {
       h.owner.setVoiceMode('continuous');
-      voiceButton(surface).click();
+      expect(voiceButton(surface).getAttribute('aria-description')).toMatch(/paused/i);
     } else {
       await startManualSpeech(surface, media);
       if (phase === 'recognizing') {
@@ -4686,7 +4690,14 @@ it.each(['recording', 'recognizing', 'continuous listening'] as const)(
     });
     expect(h.owner.snapshot().id === id).toBe(phase !== 'continuous listening');
     expect((await h.read('a.md')).match(/Parent/g)).toHaveLength(1);
-    if (phase === 'continuous listening') return;
+    if (phase === 'continuous listening') {
+      await vi.waitFor(() => {
+        expect(media.tracks[media.tracks.length - 1]?.readyState).toBe('live');
+      });
+      expect(surface.input.isConnected).toBe(true);
+      expect(h.owner.snapshot().voiceMode).toBe('continuous');
+      return;
+    }
     if (phase === 'recording') voiceButton(surface).click();
     recognition.resolve('Keep my next thought');
     await vi.waitFor(() => {
@@ -4966,14 +4977,86 @@ it('transcribes in ordinary Q without an agent connection or switching capture m
   expect(h.owner.snapshot().exchanges).toHaveLength(0);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
+it.each(['', ' 📅 2026-10-10'])(
+  'writes one ordinary task and dismisses on silence on each of two Q openings with seed %j',
+  async (seed) => {
+    const h = await setup(),
+      media = voiceMediaWithSampleClock();
+    h.memory.active = false;
+    h.owner.setVoiceMode('continuous');
+    h.owner.setInput('Retained command draft');
+    h.allowOrdinaryWrites();
+    const transcribe = vi
+      .fn()
+      .mockResolvedValueOnce('First task')
+      .mockResolvedValueOnce('Second task');
+    const { coordinator, host } = await h.mountCoordinator(
+      { available: () => {}, transcribe },
+      () => ({ agent: false, voice: true }),
+      seed === '' ? undefined : seed,
+    );
+    for (let opening = 1; opening <= 2; opening++) {
+      if (opening === 2) coordinator.openOrFocus();
+      await flushMicrotasks(0);
+      expect(media.getUserMedia).toHaveBeenCalledTimes(opening);
+      await sampleUtterance(media);
+      await vi.advanceTimersByTimeAsync(3500);
+      await vi.waitFor(() => {
+        expect(host.querySelector('.abyss-capture-input')).toBeNull();
+      });
+      expect(h.ordinaryExecute).toHaveBeenCalledTimes(opening);
+    }
+    expect(await h.read('a.md')).toBe(
+      `- [ ] Existing\n- [ ] First task ➕ 2026-08-01${seed}\n- [ ] Second task ➕ 2026-08-01${seed}\n`,
+    );
+    expect(h.owner.snapshot()).toMatchObject({ input: 'Retained command draft', exchanges: [] });
+  },
+);
+it.each([true, false])(
+  'selects continuous from the ordinary microphone menu with agent available=%s and preserves a concurrent edit',
+  async (agent) => {
+    const h = await setup(),
+      media = voiceMediaWithSampleClock(),
+      transcript = deferred<string>();
+    const work = deferred<void>();
+    h.setRun(() => work.promise);
+    const pending = h.owner.submit('Background command');
+    h.memory.active = false;
+    const surface = await h.mountCoordinator(
+      { available: () => {}, transcribe: () => transcript.promise },
+      () => ({ agent, voice: true }),
+    );
+    const menus = captureMenus();
+    voiceButton(surface).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
+    expectDefined(menus[0]).pick('Continuous');
+    expect(h.memory.active).toBe(false);
+    await flushMicrotasks(0);
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+    await sampleUtterance(media);
+    await vi.advanceTimersByTimeAsync(3500);
+    const input = surface.input;
+    input.value = 'Typed during recognition';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    transcript.resolve('Spoken task');
+    await vi.waitFor(() => {
+      expect(surface.input.value).toBe('Typed during recognition Spoken task');
+    });
+    expect(h.ordinaryExecute).not.toHaveBeenCalled();
+    expect(media.getUserMedia).toHaveBeenCalledOnce();
+    work.resolve();
+    await pending;
+  },
+);
 it.each(['stop and edit', 'one-click send'] as const)(
-  'uses native task creation for standalone Voice (%s) despite a retained continuous command preference',
+  'uses native task creation for standalone Voice (%s) in dictation mode',
   async (gesture) => {
     const h = await setup(),
       media = voiceMediaHarness(window),
       transcript = deferred<string>();
     h.allowOrdinaryWrites();
-    h.owner.setVoiceMode('continuous');
+    h.owner.setVoiceMode('manual');
     h.owner.setInput('An older command draft');
     const run = vi.fn(async () => {});
     h.setRun(run);
@@ -5005,8 +5088,7 @@ it.each(['stop and edit', 'one-click send'] as const)(
     const menus = captureMenus();
     for (const button of [mic, voiceButton(surface, 'Send')])
       button.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expect(menus).toHaveLength(0);
-    expect(h.resolveOwner).not.toHaveBeenCalled();
+    expect(menus.map((menu) => menu.titles)).toEqual([['Dictation', 'Continuous']]);
     expect(media.getUserMedia).not.toHaveBeenCalled();
     vi.useFakeTimers();
     await startManualSpeech(surface, media);
@@ -5033,7 +5115,7 @@ it.each(['stop and edit', 'one-click send'] as const)(
     expect(h.owner.snapshot()).toMatchObject({
       input: 'An older command draft',
       exchanges: [],
-      voiceMode: 'continuous',
+      voiceMode: 'manual',
     });
     expect(run).not.toHaveBeenCalled();
   },
@@ -6062,6 +6144,9 @@ it('empty Enter saves a reviewed preview while continuous capture is only listen
   );
   await vi.waitFor(async () => {
     expect(await h.read('a.md')).toContain('Parent');
+  });
+  await vi.waitFor(() => {
+    expect(media.tracks[1]?.readyState).toBe('live');
   });
   expect(media.tracks[0]?.stop).toHaveBeenCalledOnce();
 });

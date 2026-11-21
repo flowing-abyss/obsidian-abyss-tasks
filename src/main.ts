@@ -720,6 +720,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.taskInputServices,
           {
             owner: () => this.getCommandSessionOwner(),
+            knownVoiceMode: () => this.commandSessionOwner?.snapshot().voiceMode,
             availability: () => this.providerConnections.availability(this.settings.commandMode),
             memory: this.commandSurfaceMemory,
             transcription: this.commandTranscription,
