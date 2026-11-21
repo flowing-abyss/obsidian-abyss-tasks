@@ -414,6 +414,10 @@ surface's retired visibility cannot start a new session afterward. UI input/subm
 prevent late completion from clearing newer text.
 
 `PanelView` refreshes bounded read-only view/inspector context on activation and submission.
+The task menu and inspector can add the clicked occurrence to Command mode when the agent
+connection is configured. The provider projects the exact native reference through its current
+scoped read and identity registry. The surface adds it to the session's verified focus, which
+also populates the displayed tree, without submitting a turn.
 Accepted saved task navigation uses main's internal `TaskApiProvider.nativeTaskTarget` resolution
 through the existing identity owner, retained revision and current disclosure checks, then the
 native inspector selection path. Automatic Saved feedback updates the inspector in place without

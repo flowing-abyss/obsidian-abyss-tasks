@@ -1,4 +1,5 @@
 import { Menu, type MenuItem } from 'obsidian';
+import { commandMessage } from '../ai/commandMessages';
 import { sameTag } from '../markdown/tagSyntax';
 import { moment } from '../obsidianMoment';
 import { PRIORITY_LEVELS } from '../priority';
@@ -17,7 +18,10 @@ import { buildStatusSubmenu } from './statusMenu';
 import type { TaskSelectionNode } from './taskSelection';
 import type { TrackingSurface } from './timeTracking/TimeBadge';
 
+export type TaskContextAction = (target: TaskNodeRef) => (() => void) | undefined;
+export const aiContextLabel = (): string => commandMessage('Add to AI context');
 interface TaskContextMenuOptions {
+  readonly aiContext?: TaskContextAction | undefined;
   readonly node: TaskSelectionNode;
   readonly target: TaskNodeRef | undefined;
   readonly anchor: HTMLElement;
@@ -71,6 +75,12 @@ export function createTaskContextMenu(options: TaskContextMenuOptions): Menu {
   addEditMenuItems(menu, options);
   addPropertyMenuItems(menu, options);
   addTagFilterMenuItems(menu, [...task.tags, ...(filters?.representedTags ?? [])], filters);
+
+  const add = target === undefined ? undefined : options.aiContext?.(target);
+  if (add !== undefined)
+    menu.addItem((item) =>
+      item.setTitle(aiContextLabel()).setIcon('sparkles').setSection('ai').onClick(add),
+    );
 
   menu.addItem((item) =>
     item

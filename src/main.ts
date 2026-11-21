@@ -723,6 +723,7 @@ export default class TaskCalendarPlugin extends Plugin {
             availability: () => this.providerConnections.availability(this.settings.commandMode),
             memory: this.commandSurfaceMemory,
             transcription: this.commandTranscription,
+            commandTaskTarget: (ref) => this.taskApiProvider?.commandTaskTarget(ref),
             nativeTarget: (target, revision) =>
               this.taskApiProvider?.nativeTaskTarget(target, revision),
           },

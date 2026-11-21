@@ -9,7 +9,12 @@ import type { CaptureSnapshot, TaskCaptureController } from './TaskCaptureContro
 
 export type CapturePresentation = 'default' | 'inline';
 
+export interface CaptureTaskTarget {
+  readonly target: string;
+  readonly revision: string;
+}
 export interface CaptureExtension {
+  addTask?(task: CaptureTaskTarget): void;
   active(): boolean;
   input(text: string): void;
   edited?(): void;
@@ -411,6 +416,10 @@ export class CaptureSurface {
     this.controller_abyssPrivate.setDraft(this.input.value, { deferRecognition: true });
     this.controller_abyssPrivate.flushRecognition();
     return 'ready';
+  }
+
+  addTask(task: CaptureTaskTarget): void {
+    this.extension_abyssPrivate?.addTask?.(task);
   }
 
   focus(): void {

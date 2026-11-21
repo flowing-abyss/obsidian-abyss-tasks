@@ -22,6 +22,7 @@ import type {
   TaskSearchApi,
   TaskStatusMutationApi,
 } from '../tasks';
+import { sameTaskNodeRef, taskNodeRootRef, taskNodeSourceLine } from '../tasks';
 import { NoteApi } from './noteApi';
 import { NoteReadRegistry } from './NoteReadRegistry';
 import { createProjectApiMutations, type ProjectPorts } from './projectApiMutations';
@@ -492,6 +493,9 @@ function getApi(
 export class TaskApiProvider implements TasksApiProviderV1 {
   readonly getApi: (version: number, options: { consumerId: string }) => ApiResultV1<TasksApiV1>;
   readonly dispose: () => void;
+  readonly commandTaskTarget: (
+    ref: TaskNodeRef,
+  ) => { target: string; revision: string } | undefined;
   readonly nativeTaskTarget: (target: string, revision: string) => TaskNodeRef | undefined;
   constructor(options: ProviderOptions) {
     const owner: ProviderOwner = {
@@ -518,6 +522,22 @@ export class TaskApiProvider implements TasksApiProviderV1 {
       diagnostics: 0,
     };
     this.getApi = (version, input) => getApi(owner, version, input);
+    this.commandTaskTarget = (ref) => {
+      if (checkProvider(owner) !== undefined) return undefined;
+      activate(owner);
+      const root = taskNodeRootRef(ref);
+      const node = options.reads.node({
+        filePath: root.filePath,
+        rootRevision: root.revision,
+        rootLine: root.line,
+        nodeOffset: taskNodeSourceLine(ref) - root.line,
+      });
+      if (node.type !== 'ok' || !sameTaskNodeRef(node.value.value.target, ref)) return undefined;
+      const identity = owner.identities.project(node.value, node.observation.semanticsRevision);
+      return identity.ok
+        ? { target: identity.value.target, revision: identity.value.revision }
+        : undefined;
+    };
     this.nativeTaskTarget = (target, revision) => {
       if (owner.closed) return undefined;
       const found = owner.identities.lookup(target);

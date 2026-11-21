@@ -4,7 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { localDate } from '../src/tasks';
+import { localDate, type TaskNodeRef } from '../src/tasks';
 import { taskTreeNodes } from '../src/tasks/domain/taskSearchProjection';
 import { localDate as occupiedFixtureDate } from '../src/tasks/domain/validation';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
@@ -54,7 +54,7 @@ function mockMenuDom(): void {
   });
 }
 
-function fixture() {
+function fixture(aiContext?: ConstructorParameters<typeof CenterPanel>[0]['aiContext']) {
   mockMenuDom();
   const first = task({
     title: 'First',
@@ -84,6 +84,7 @@ function fixture() {
   const state = new AppState();
   state.set('selectedList', { type: 'project', path: 'tasks.md' });
   const panel = new CenterPanel({
+    aiContext,
     state,
     app: {} as App,
     settings: { ...DEFAULT_SETTINGS, pinnedTags: ['#one', '#both', '#absent'] },
@@ -137,6 +138,34 @@ function bulkMenu(panel: CenterPanel, card: HTMLElement): Menu {
 }
 
 describe('task menu registration contract', () => {
+  it('offers AI context in its own section for the clicked task when available', () => {
+    const selected = vi.fn<(ref: TaskNodeRef) => void>();
+    let enabled = true;
+    const { panel, card, first } = fixture((ref) =>
+      enabled
+        ? () => {
+            selected(ref);
+          }
+        : undefined,
+    );
+    try {
+      const menu = singleMenu(panel, card, first);
+      const rows = sequence(menu);
+      expect(rows[rows.findIndex(([label]) => label === 'Open in note') - 1]).toEqual([
+        'Add to AI context',
+        'ai',
+      ]);
+      const add = expectDefined(items(menu).find((item) => item.title__ === 'Add to AI context'));
+      (add as unknown as { onClick__: () => void }).onClick__();
+      expect(selected).toHaveBeenCalledExactlyOnceWith({ type: 'task', ref: first.ref });
+      enabled = false;
+      expect(
+        sequence(singleMenu(panel, card, first)).some(([label]) => label === 'Add to AI context'),
+      ).toBe(false);
+    } finally {
+      panel.destroy();
+    }
+  });
   it('keeps single-task sections and checked presets/tags in their complete registered order', () => {
     const { panel, card, first } = fixture();
     try {

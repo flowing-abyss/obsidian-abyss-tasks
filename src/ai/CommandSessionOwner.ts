@@ -564,10 +564,17 @@ export class CommandSessionOwner {
     await this.flush();
     return result;
   }
-  focus(target: CommandFocus | readonly CommandFocus[]): Promise<boolean> {
+  focus(target: CommandFocus | readonly CommandFocus[], mode?: 'add'): Promise<boolean> {
     this.interaction++;
     return this.transition(async () => {
       await this.session.settle();
+      if (mode === 'add' && 'kind' in target) {
+        const current = this.session.snapshot().focus;
+        const next = current.some((entry) => entry.target === target.target)
+          ? current.map((entry) => (entry.target === target.target ? target : entry))
+          : [...current, target];
+        return this.session.focus(next);
+      }
       return this.session.focus(target);
     });
   }

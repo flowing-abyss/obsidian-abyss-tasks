@@ -10,7 +10,11 @@ import type { ProjectsSettings } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { showMenuAtMouseEventWithFocus } from '../nativeMenuFocus';
 import { runAsyncAction } from '../runAsyncAction';
-import type { CaptureExtension, CaptureExtensionHost } from '../taskCapture/CaptureSurface';
+import type {
+  CaptureExtension,
+  CaptureExtensionHost,
+  CaptureTaskTarget,
+} from '../taskCapture/CaptureSurface';
 import { CommandChangeViewport } from './CommandChangeViewport';
 import { CommandElapsedTime, type CommandElapsedMemory } from './CommandElapsedTime';
 import { CommandHistoryPopover } from './CommandHistoryPopover';
@@ -90,39 +94,39 @@ export class CommandModeSurface implements CaptureExtension {
   private readonly elapsed: CommandElapsedTime;
   private readonly content: HTMLElement;
   private readonly viewport: CommandChangeViewport;
-  private scrollGeneration = 0;
+  private scrollGeneration_abyssPrivate = 0;
   private readonly treeHost: HTMLElement;
   private readonly latest: HTMLElement;
   private readonly question: HTMLElement;
-  private readonly historyButton: HTMLButtonElement;
+  private readonly historyButton_abyssPrivate: HTMLButtonElement;
   private readonly toggle: HTMLButtonElement;
   private readonly toolbar: HTMLElement;
   private readonly primary: HTMLButtonElement;
-  private readonly microphone: HTMLButtonElement;
+  private readonly microphone_abyssPrivate: HTMLButtonElement;
   private readonly waveform: CommandVoiceWaveform;
   private voice: CommandVoiceController | undefined;
-  private primaryAction: PrimaryAction = 'send';
+  private primaryAction_abyssPrivate: PrimaryAction = 'send';
   private readonly projects: CommandProjects;
   private readonly notes: CommandNotes;
   private tree: CommandTree | undefined;
   private owner: CommandSessionOwner | undefined;
   private noteReview: ReturnType<CommandSessionOwner['registerNoteReview']> | undefined;
-  private unsubscribe: (() => void) | undefined;
+  private unsubscribe_abyssPrivate: (() => void) | undefined;
   private menu: Menu | undefined;
   private history: CommandHistoryPopover | undefined;
-  private releaseMenu = (): void => {};
+  private releaseMenu_abyssPrivate = (): void => {};
   private live = true;
-  private commandActive = false;
-  private modeGeneration = 0;
-  private popupGeneration = 0;
+  private commandActive_abyssPrivate = false;
+  private modeGeneration_abyssPrivate = 0;
+  private popupGeneration_abyssPrivate = 0;
   private readonly visibility = Symbol();
-  private readonly initializing: boolean = true;
-  private inputGeneration = 0;
-  private contentState: CommandSessionSnapshot | undefined;
-  private availabilityRevision: number | undefined;
+  private readonly initializing_abyssPrivate: boolean = true;
+  private inputGeneration_abyssPrivate = 0;
+  private contentState_abyssPrivate: CommandSessionSnapshot | undefined;
+  private availabilityRevision_abyssPrivate: number | undefined;
   private navigated = '';
   private phaseTimer: number | undefined;
-  private pendingPhase = '';
+  private pendingPhase_abyssPrivate = '';
   constructor(
     private readonly capture: CaptureExtensionHost,
     private readonly options: CommandModeOptions,
@@ -133,29 +137,9 @@ export class CommandModeSurface implements CaptureExtension {
       cls: 'abyss-command-toolbar',
       attr: { role: 'toolbar', 'aria-label': commandMessage('Quick capture controls') },
     });
-    this.historyButton = this.button(commandMessage('History'), 'history');
+    this.historyButton_abyssPrivate = this.button(commandMessage('History'), 'history');
     this.toggle = this.button(commandMessage('CommandMode'), 'sparkles');
-    this.microphone = this.button(commandMessage('Microphone'), 'mic');
-    this.component.registerDomEvent(this.microphone, 'click', () => {
-      const generation = this.modeGeneration;
-      this.withOwner(
-        (owner) => {
-          this.activateOwner(owner);
-          this.voice?.toggle();
-        },
-        () => generation === this.modeGeneration && !this.capture.input.ownerDocument.hidden,
-      );
-    });
-    this.component.registerDomEvent(this.microphone, 'contextmenu', (event) => {
-      event.preventDefault();
-      this.openMenu(this.microphone, event);
-    });
-    this.component.registerDomEvent(this.microphone, 'keydown', (event) => {
-      if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
-        event.preventDefault();
-        this.openMenu(this.microphone);
-      }
-    });
+    this.microphone_abyssPrivate = this.button(commandMessage('Microphone'), 'mic');
     this.primary = this.button(commandMessage('Send'), 'arrow-up');
     this.phase = capture.element.createDiv({
       cls: 'abyss-command-phase',
@@ -175,7 +159,7 @@ export class CommandModeSurface implements CaptureExtension {
       allowLink: (href, path) => this.allowLink(href, path),
       changed: () => {
         if (this.live && this.active() && this.owner !== undefined)
-          this.scrollChanges(this.owner.snapshot());
+          this.scrollChanges_abyssPrivate(this.owner.snapshot());
       },
     });
     this.treeHost = this.content.createDiv({ cls: 'abyss-command-tree' });
@@ -189,23 +173,45 @@ export class CommandModeSurface implements CaptureExtension {
         changed: () => {
           if (!this.live || !this.active() || this.owner === undefined) return;
           const state = this.owner.snapshot();
-          this.renderPrimary(state);
-          this.renderPhase(state, busy(state));
-          this.scrollChanges(state);
+          this.renderPrimary_abyssPrivate(state);
+          this.renderPhase_abyssPrivate(state, busy(state));
+          this.scrollChanges_abyssPrivate(state);
         },
       },
     );
     this.latest = capture.element.createDiv({ cls: 'abyss-command-latest' });
     this.question = capture.element.createDiv({ cls: 'abyss-command-question' });
-    this.bindControls();
-    this.bindInputSizing();
+    this.bindControls_abyssPrivate();
+    this.bindInputSizing_abyssPrivate();
     this.setActive(options.memory.active);
-    this.renderMicrophone();
-    this.initializing = false;
+    this.renderMicrophone_abyssPrivate();
+    this.initializing_abyssPrivate = false;
   }
-  private bindControls(): void {
-    this.component.registerDomEvent(this.historyButton, 'click', () => {
-      this.openHistory();
+  private bindControls_abyssPrivate(): void {
+    this.component.registerDomEvent(this.microphone_abyssPrivate, 'click', () => {
+      const generation = this.modeGeneration_abyssPrivate;
+      this.withOwner(
+        (owner) => {
+          this.activateOwner_abyssPrivate(owner);
+          this.voice?.toggle();
+        },
+        () =>
+          generation === this.modeGeneration_abyssPrivate &&
+          !this.capture.input.ownerDocument.hidden,
+      );
+    });
+    this.component.registerDomEvent(this.microphone_abyssPrivate, 'contextmenu', (event) => {
+      event.preventDefault();
+      this.openMenu(this.microphone_abyssPrivate, event);
+    });
+    this.component.registerDomEvent(this.microphone_abyssPrivate, 'keydown', (event) => {
+      if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+        event.preventDefault();
+        this.openMenu(this.microphone_abyssPrivate);
+      }
+    });
+    this.component.registerDomEvent(this.historyButton_abyssPrivate, 'click', () => {
+      this.openHistory_abyssPrivate();
     });
     this.component.registerDomEvent(this.toggle, 'click', () => {
       this.setActive(!this.active());
@@ -221,13 +227,13 @@ export class CommandModeSurface implements CaptureExtension {
       }
     });
     this.component.registerDomEvent(this.primary, 'click', () => {
-      this.activatePrimary();
+      this.activatePrimary_abyssPrivate();
     });
     this.component.registerDomEvent(
       this.content,
       'click',
       (event) => {
-        this.guardPlannedLink(event);
+        this.guardPlannedLink_abyssPrivate(event);
       },
       true,
     );
@@ -235,27 +241,28 @@ export class CommandModeSurface implements CaptureExtension {
       this.remember();
     });
     this.component.registerDomEvent(this.capture.input, 'focus', () => {
-      this.updateAvailability();
-      if (this.active() && this.owner !== undefined) this.renderPrimary(this.owner.snapshot());
+      this.updateAvailability_abyssPrivate();
+      if (this.active() && this.owner !== undefined)
+        this.renderPrimary_abyssPrivate(this.owner.snapshot());
     });
   }
-  private updateAvailability(availability = this.options.availability?.()): void {
-    this.availabilityRevision = this.options.availabilityRevision?.();
+  private updateAvailability_abyssPrivate(availability = this.options.availability?.()): void {
+    this.availabilityRevision_abyssPrivate = this.options.availabilityRevision?.();
     const agent = availability?.agent !== false;
     this.toggle.hidden = !agent;
-    this.updateHistoryAvailability(agent);
-    this.microphone.hidden =
+    this.updateHistoryAvailability_abyssPrivate(agent);
+    this.microphone_abyssPrivate.hidden =
       availability?.voice === false ||
       this.options.transcription === undefined ||
       (this.active() && !agent);
-    this.microphone.disabled = this.microphone.hidden === true;
+    this.microphone_abyssPrivate.disabled = this.microphone_abyssPrivate.hidden === true;
   }
-  private updateHistoryAvailability(available: boolean): void {
-    this.historyButton.hidden = !available;
-    this.historyButton.disabled = !available;
+  private updateHistoryAvailability_abyssPrivate(available: boolean): void {
+    this.historyButton_abyssPrivate.hidden = !available;
+    this.historyButton_abyssPrivate.disabled = !available;
     if (!available) this.history?.close(false);
   }
-  private bindInputSizing(): void {
+  private bindInputSizing_abyssPrivate(): void {
     const win = this.capture.input.win as Window & { ResizeObserver?: typeof ResizeObserver };
     if (typeof win.ResizeObserver === 'function') {
       let width = -1,
@@ -289,16 +296,27 @@ export class CommandModeSurface implements CaptureExtension {
     setTooltip(button, label);
     return button;
   }
+  addTask(task: CaptureTaskTarget): void {
+    if (!this.active()) this.setActive(true, 'preference');
+    if (!this.active()) return;
+    const generation = this.modeGeneration_abyssPrivate;
+    this.withOwner(
+      (owner) => {
+        runAsyncAction(owner.focus({ kind: 'task', ...task }, 'add'));
+      },
+      () => this.modeGeneration_abyssPrivate === generation,
+    );
+  }
   active(): boolean {
-    return this.commandActive;
+    return this.commandActive_abyssPrivate;
   }
   private setActive(requested: boolean, reason: 'open' | 'history' | 'preference' = 'open'): void {
     const availability = this.options.availability?.();
     const active = requested && availability?.agent !== false;
-    this.retirePreviousInput(active);
-    const generation = ++this.modeGeneration;
-    this.commandActive = active;
-    this.updateAvailability(availability);
+    this.retirePreviousInput_abyssPrivate(active);
+    const generation = ++this.modeGeneration_abyssPrivate;
+    this.commandActive_abyssPrivate = active;
+    this.updateAvailability_abyssPrivate(availability);
     this.options.memory.active = active;
     this.capture.element.classList.remove('abyss-capture-surface--voice');
     this.toggle.setAttribute('aria-pressed', String(active));
@@ -309,9 +327,9 @@ export class CommandModeSurface implements CaptureExtension {
     if (active) {
       this.withOwner(
         (owner) => {
-          this.activateCommand(owner, reason);
+          this.activateCommand_abyssPrivate(owner, reason);
         },
-        () => generation === this.modeGeneration,
+        () => generation === this.modeGeneration_abyssPrivate,
         () => {
           this.capture.input.readOnly = true;
           this.capture.input.setAttribute('aria-busy', 'true');
@@ -319,24 +337,24 @@ export class CommandModeSurface implements CaptureExtension {
           this.setPrimary('send', true);
         },
       );
-    } else this.deactivateCommand();
-    if (!this.initializing) this.capture.refresh();
+    } else this.deactivateCommand_abyssPrivate();
+    if (!this.initializing_abyssPrivate) this.capture.refresh();
   }
-  private retirePreviousInput(active: boolean): void {
+  private retirePreviousInput_abyssPrivate(active: boolean): void {
     if (active) {
       if (!this.active()) this.voice?.stop();
       return;
     }
-    this.inputGeneration++;
-    this.clearPhaseTimer();
+    this.inputGeneration_abyssPrivate++;
+    this.clearPhaseTimer_abyssPrivate();
     this.elapsed.dispose();
   }
-  private activateCommand(
+  private activateCommand_abyssPrivate(
     owner: CommandSessionOwner,
     reason: 'open' | 'history' | 'preference',
   ): void {
-    this.activateOwner(owner);
-    this.bindNoteReview();
+    this.activateOwner_abyssPrivate(owner);
+    this.bindNoteReview_abyssPrivate();
     owner.updateContext(this.options.context());
     this.options.memory.presentation ??= new Map();
     this.tree ??= new CommandTree(this.treeHost, {
@@ -350,20 +368,20 @@ export class CommandModeSurface implements CaptureExtension {
       },
       allowLink: (href, path) => this.allowLink(href, path),
     });
-    this.unsubscribe ??= owner.subscribe((state) => {
+    this.unsubscribe_abyssPrivate ??= owner.subscribe((state) => {
       this.render(state);
     });
-    this.restoreCommandInput();
-    if (reason === 'open') this.startContinuous();
+    this.restoreCommandInput_abyssPrivate();
+    if (reason === 'open') this.startContinuous_abyssPrivate();
   }
-  private deactivateCommand(): void {
+  private deactivateCommand_abyssPrivate(): void {
     this.tree?.destroy();
     this.tree = undefined;
-    this.contentState = undefined;
+    this.contentState_abyssPrivate = undefined;
     this.voice?.stop();
-    this.releaseNoteReview();
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
+    this.releaseNoteReview_abyssPrivate();
+    this.unsubscribe_abyssPrivate?.();
+    this.unsubscribe_abyssPrivate = undefined;
     if (this.owner !== undefined)
       runAsyncAction(
         this.owner.hide(this.visibility),
@@ -373,7 +391,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.capture.input.placeholder = commandMessage('Task name…');
     this.setPrimary('send', false);
   }
-  private restoreCommandInput(): void {
+  private restoreCommandInput_abyssPrivate(): void {
     this.capture.input.setAttribute('aria-label', commandMessage('Command'));
     this.capture.input.placeholder = commandMessage('What would you like to do?');
     this.capture.input.readOnly = false;
@@ -409,27 +427,27 @@ export class CommandModeSurface implements CaptureExtension {
       commandMessage('Could not open command history.'),
     );
   }
-  private activateOwner(owner: CommandSessionOwner): void {
+  private activateOwner_abyssPrivate(owner: CommandSessionOwner): void {
     owner.open(this.visibility);
     this.bindVoice();
   }
   edited(): void {
-    this.refreshChangedAvailability();
+    this.refreshChangedAvailability_abyssPrivate();
     this.waveform.clear();
     this.voice?.edited();
   }
   input(text: string): void {
-    this.inputGeneration++;
+    this.inputGeneration_abyssPrivate++;
     this.voice?.clearMessage();
     this.owner?.setInput(text);
     this.remember();
   }
-  private bindNoteReview(): void {
+  private bindNoteReview_abyssPrivate(): void {
     this.noteReview ??= this.owner?.registerNoteReview(
       (basis) => this.live && this.active() && this.notes.reviewStatus(basis) === 'ready',
     );
   }
-  private releaseNoteReview(): void {
+  private releaseNoteReview_abyssPrivate(): void {
     this.noteReview?.dispose();
     this.noteReview = undefined;
   }
@@ -449,17 +467,17 @@ export class CommandModeSurface implements CaptureExtension {
       transcription: this.options.transcription,
       mode: () => this.voiceMode(),
       continuousAvailable: () => {
-        this.updateAvailability();
+        this.updateAvailability_abyssPrivate();
         return this.voiceMode() === 'continuous';
       },
       input: () => this.capture.input.value,
       retain: (text) => {
-        this.inputGeneration++;
+        this.inputGeneration_abyssPrivate++;
         if (this.active()) this.owner?.setInput(text);
         else this.capture.replaceOrdinaryInput(text);
       },
       submit: (text, basis, admission) => {
-        const owner = this.submissionOwner();
+        const owner = this.submissionOwner_abyssPrivate();
         if (owner === undefined) return Promise.resolve(false);
         owner.updateContext(this.options.context());
         return owner.enqueueVoice(
@@ -480,72 +498,74 @@ export class CommandModeSurface implements CaptureExtension {
       },
       activity: (samples, listening) => {
         const speaking = String(samples !== undefined);
-        if (this.microphone.dataset['speaking'] !== speaking)
-          this.microphone.dataset['speaking'] = speaking;
+        if (this.microphone_abyssPrivate.dataset['speaking'] !== speaking)
+          this.microphone_abyssPrivate.dataset['speaking'] = speaking;
         if (listening) this.waveform.draw(samples);
         else this.waveform.clear();
       },
       changed: () => {
         if (!this.live || this.owner === undefined) return;
         if (!this.active()) {
-          this.renderOrdinaryVoice();
+          this.renderOrdinaryVoice_abyssPrivate();
           return;
         }
         const state = this.owner.snapshot();
-        this.renderPrimary(state);
-        this.renderPhase(state, busy(state));
-        this.renderMicrophone();
+        this.renderPrimary_abyssPrivate(state);
+        this.renderPhase_abyssPrivate(state, busy(state));
+        this.renderMicrophone_abyssPrivate();
       },
     });
-    this.renderMicrophone();
+    this.renderMicrophone_abyssPrivate();
   }
-  private startContinuous(): void {
+  private startContinuous_abyssPrivate(): void {
     if (
-      this.microphone.hidden === false &&
+      this.microphone_abyssPrivate.hidden === false &&
       this.toggle.hidden === false &&
       this.voice !== undefined
     )
       this.voice.startContinuous();
   }
   private voiceMode(): 'manual' | 'continuous' {
-    return this.active() && this.toggle.hidden === false && this.microphone.hidden === false
+    return this.active() &&
+      this.toggle.hidden === false &&
+      this.microphone_abyssPrivate.hidden === false
       ? (this.owner?.snapshot().voiceMode ?? 'manual')
       : 'manual';
   }
-  private renderOrdinaryVoice(): void {
+  private renderOrdinaryVoice_abyssPrivate(): void {
     const status = this.voice?.status();
     this.voicePhase.hidden = true;
     this.phase.hidden = status === undefined;
     this.capture.element.classList.toggle('abyss-capture-surface--voice', status !== undefined);
     if (status !== undefined) this.phaseLabel.textContent = status.message;
     this.setPrimary('send', false);
-    if (this.owner !== undefined) this.renderMicrophone();
+    if (this.owner !== undefined) this.renderMicrophone_abyssPrivate();
   }
   pendingInput(): boolean {
     return this.voice?.active() === true || this.voice?.pending() === true;
   }
-  private renderMicrophone(): void {
+  private renderMicrophone_abyssPrivate(): void {
     const mode = this.voiceMode(),
       active = this.voice?.microphoneActive() === true;
     if (!active) this.waveform.clear();
     const icon = microphoneIcon(mode, active);
-    if (this.microphone.dataset['voiceIcon'] !== icon) {
-      this.microphone.dataset['voiceIcon'] = icon;
-      setIcon(this.microphone, icon);
+    if (this.microphone_abyssPrivate.dataset['voiceIcon'] !== icon) {
+      this.microphone_abyssPrivate.dataset['voiceIcon'] = icon;
+      setIcon(this.microphone_abyssPrivate, icon);
       if (icon === 'square')
-        this.microphone.querySelector('svg')?.setAttribute('fill', 'currentColor');
+        this.microphone_abyssPrivate.querySelector('svg')?.setAttribute('fill', 'currentColor');
     }
-    this.describeMicrophone(mode);
-    this.microphone.setAttribute(
+    this.describeMicrophone_abyssPrivate(mode);
+    this.microphone_abyssPrivate.setAttribute(
       'aria-label',
       commandMessage(mode === 'manual' && active ? 'Stop dictation' : 'Microphone'),
     );
-    this.microphone.dataset['voiceMode'] = mode;
-    this.microphone.dataset['speaking'] = String(this.voice?.speaking() === true);
-    this.microphone.setAttribute('aria-pressed', String(active));
+    this.microphone_abyssPrivate.dataset['voiceMode'] = mode;
+    this.microphone_abyssPrivate.dataset['speaking'] = String(this.voice?.speaking() === true);
+    this.microphone_abyssPrivate.setAttribute('aria-pressed', String(active));
     this.capture.input.toggleAttribute('data-recording', active);
   }
-  private describeMicrophone(mode: 'manual' | 'continuous'): void {
+  private describeMicrophone_abyssPrivate(mode: 'manual' | 'continuous'): void {
     const status = this.voice?.status();
     const message =
       status?.message ??
@@ -556,13 +576,13 @@ export class CommandModeSurface implements CaptureExtension {
     const queued = this.owner?.queuedVoice() ?? 0;
     if (queued > 0) parts.push(`${queued} ${commandMessage('queued')}`);
     const description = parts.join(' · ');
-    setTooltip(this.microphone, description);
-    this.microphone.setAttribute('aria-description', description);
+    setTooltip(this.microphone_abyssPrivate, description);
+    this.microphone_abyssPrivate.setAttribute('aria-description', description);
   }
   submit(): void {
     const owner = this.owner;
     if (!this.live) return;
-    if (this.finishVoice()) return;
+    if (this.finishVoice_abyssPrivate()) return;
     if (!this.active()) {
       this.capture.submitOrdinary();
       return;
@@ -579,11 +599,11 @@ export class CommandModeSurface implements CaptureExtension {
       commandMessage('Could not run command'),
     );
   }
-  private finishVoice(): boolean {
+  private finishVoice_abyssPrivate(): boolean {
     return this.voiceMode() === 'manual' && this.voice?.requestSend() === true;
   }
-  private submissionOwner(): CommandSessionOwner | undefined {
-    this.updateAvailability();
+  private submissionOwner_abyssPrivate(): CommandSessionOwner | undefined {
+    this.updateAvailability_abyssPrivate();
     if (this.toggle.hidden === true) {
       this.setPrimary('send', true);
       return undefined;
@@ -595,10 +615,10 @@ export class CommandModeSurface implements CaptureExtension {
     basis: CommandSubmissionBasis,
     admission?: () => boolean,
   ): Promise<void> {
-    const owner = this.submissionOwner();
+    const owner = this.submissionOwner_abyssPrivate();
     if (owner === undefined) return;
     owner.updateContext(this.options.context());
-    const generation = ++this.inputGeneration,
+    const generation = ++this.inputGeneration_abyssPrivate,
       input = owner.captureInput(),
       submission = owner.captureSubmission(this.visibility);
     const current = (): boolean =>
@@ -618,7 +638,7 @@ export class CommandModeSurface implements CaptureExtension {
       );
     const next = owner.snapshot();
     if (
-      generation === this.inputGeneration &&
+      generation === this.inputGeneration_abyssPrivate &&
       input.current() &&
       next.id === basis.sessionId &&
       next.input === text &&
@@ -626,13 +646,13 @@ export class CommandModeSurface implements CaptureExtension {
     )
       owner.clearInput();
   }
-  private activatePrimary(): void {
-    if (this.primaryAction !== 'stop') {
+  private activatePrimary_abyssPrivate(): void {
+    if (this.primaryAction_abyssPrivate !== 'stop') {
       this.submit();
       return;
     }
-    if (this.finishVoice()) return;
-    this.inputGeneration++;
+    if (this.finishVoice_abyssPrivate()) return;
+    this.inputGeneration_abyssPrivate++;
     if (this.owner !== undefined)
       runAsyncAction(this.owner.stop(), commandMessage('Could not stop command'));
   }
@@ -648,32 +668,33 @@ export class CommandModeSurface implements CaptureExtension {
       this.primary.setAttribute('aria-label', labels[action]);
       setTooltip(this.primary, labels[action]);
     }
-    this.primaryAction = action;
+    this.primaryAction_abyssPrivate = action;
     this.primary.disabled = disabled;
   }
-  private renderPrimary(state: CommandSessionSnapshot): void {
-    this.refreshChangedAvailability();
+  private renderPrimary_abyssPrivate(state: CommandSessionSnapshot): void {
+    this.refreshChangedAvailability_abyssPrivate();
     if (this.toggle.hidden === true) {
       this.setPrimary('send', true);
       return;
     }
-    this.renderAvailablePrimary(state);
+    this.renderAvailablePrimary_abyssPrivate(state);
   }
-  private refreshChangedAvailability(): void {
-    if (this.availabilityRevision !== this.options.availabilityRevision?.())
-      this.updateAvailability();
+  private refreshChangedAvailability_abyssPrivate(): void {
+    if (this.availabilityRevision_abyssPrivate !== this.options.availabilityRevision?.())
+      this.updateAvailability_abyssPrivate();
   }
-  private renderAvailablePrimary(state: CommandSessionSnapshot): void {
-    if (this.renderDictationPrimary()) return;
+  private renderAvailablePrimary_abyssPrivate(state: CommandSessionSnapshot): void {
+    if (this.renderDictationPrimary_abyssPrivate()) return;
     if (state.input.trim() !== '') {
       this.setPrimary('send', false);
       return;
     }
     if (busy(state)) this.setPrimary('stop', false);
-    else if (readyToSave(state)) this.setPrimary('save', this.noteReviewStatus(state) !== 'ready');
+    else if (readyToSave(state))
+      this.setPrimary('save', this.noteReviewStatus_abyssPrivate(state) !== 'ready');
     else this.setPrimary('send', needsResolution(state));
   }
-  private renderDictationPrimary(): boolean {
+  private renderDictationPrimary_abyssPrivate(): boolean {
     if (this.voiceMode() !== 'manual') return false;
     if (this.voice?.active() === true) {
       this.setPrimary('send', false);
@@ -702,7 +723,7 @@ export class CommandModeSurface implements CaptureExtension {
     this.options.memory.scrollTop = this.content.scrollTop;
   }
   private failure(message: string): void {
-    this.clearPhaseTimer();
+    this.clearPhaseTimer_abyssPrivate();
     if (this.live) this.phaseLabel.textContent = message;
   }
   private render(state: CommandSessionSnapshot): void {
@@ -717,21 +738,21 @@ export class CommandModeSurface implements CaptureExtension {
     }
     if (input.value !== '') this.waveform.clear();
     const isBusy = busy(state);
-    this.renderContent(state);
-    this.renderPrimary(state);
+    this.renderContent_abyssPrivate(state);
+    this.renderPrimary_abyssPrivate(state);
     this.capture.input.setAttribute('aria-busy', String(isBusy));
     this.capture.input.setAttribute('aria-invalid', String(state.status.kind === 'error'));
-    this.renderPhase(state, isBusy);
-    this.renderLatest(state);
+    this.renderPhase_abyssPrivate(state, isBusy);
+    this.renderLatest_abyssPrivate(state);
     this.question.textContent = state.activeQuestion ?? '';
     this.question.hidden = state.activeQuestion === null;
-    this.scrollChanges(state);
-    this.navigateSaved(state);
+    this.scrollChanges_abyssPrivate(state);
+    this.navigateSaved_abyssPrivate(state);
     this.reveal(state);
   }
-  private renderContent(state: CommandSessionSnapshot): void {
-    const previous = this.contentState;
-    this.contentState = state;
+  private renderContent_abyssPrivate(state: CommandSessionSnapshot): void {
+    const previous = this.contentState_abyssPrivate;
+    this.contentState_abyssPrivate = state;
     if (previous !== undefined && contentFields.every((key) => state[key] === previous[key]))
       return;
     const evidence = discardedHistoryPreview(state);
@@ -753,18 +774,18 @@ export class CommandModeSurface implements CaptureExtension {
         this.content.querySelector('.abyss-project-dashboard-header, .abyss-command-note') !== null,
     );
   }
-  private renderLatest(state: CommandSessionSnapshot): void {
+  private renderLatest_abyssPrivate(state: CommandSessionSnapshot): void {
     const last = [...state.exchanges].reverse().find((entry) => entry.role === 'user');
     this.latest.textContent = last?.text ?? '';
     this.latest.hidden = last === undefined || last.text === state.input;
   }
-  private scrollChanges(state: CommandSessionSnapshot): void {
-    const generation = ++this.scrollGeneration;
+  private scrollChanges_abyssPrivate(state: CommandSessionSnapshot): void {
+    const generation = ++this.scrollGeneration_abyssPrivate;
     const key = `${state.id}:${state.proposal.revision}:${state.exchanges.length}`;
     if (
       busy(state) ||
       this.options.memory.scrolledChange === key ||
-      this.noteReviewStatus(state) === 'pending'
+      this.noteReviewStatus_abyssPrivate(state) === 'pending'
     )
       return;
     if (this.tree === undefined) return;
@@ -775,7 +796,7 @@ export class CommandModeSurface implements CaptureExtension {
           !projectsReady ||
           !this.live ||
           !this.active() ||
-          generation !== this.scrollGeneration
+          generation !== this.scrollGeneration_abyssPrivate
         )
           return;
         this.viewport.update(state.id);
@@ -801,30 +822,30 @@ export class CommandModeSurface implements CaptureExtension {
     );
     textarea.scrollTop = scroll;
   }
-  private renderPhase(state: CommandSessionSnapshot, isBusy: boolean): void {
+  private renderPhase_abyssPrivate(state: CommandSessionSnapshot, isBusy: boolean): void {
     this.elapsed.update(
       `${state.id}:${state.exchanges.filter((entry) => entry.role === 'user').length}`,
       isBusy,
     );
     const waiting = state.activeQuestion !== null && !isBusy && state.status.kind !== 'error';
-    this.renderVoicePhase();
+    this.renderVoicePhase_abyssPrivate();
     let message = phaseMessage(state.status.message);
     if (waiting) message = commandMessage('Needs your answer.');
     else if (state.input.trim() === '' && readyToSave(state))
-      message = this.noteReviewMessage(state);
+      message = this.noteReviewMessage_abyssPrivate(state);
     if (!isBusy) {
-      this.clearPhaseTimer();
+      this.clearPhaseTimer_abyssPrivate();
       this.phaseLabel.textContent = message;
       return;
     }
-    this.pendingPhase = message;
+    this.pendingPhase_abyssPrivate = message;
     if (this.phaseTimer !== undefined || this.phaseLabel.textContent === message) return;
     this.phaseTimer = this.phase.win.setTimeout(() => {
       this.phaseTimer = undefined;
-      if (this.live && this.active()) this.phaseLabel.textContent = this.pendingPhase;
+      if (this.live && this.active()) this.phaseLabel.textContent = this.pendingPhase_abyssPrivate;
     }, 150);
   }
-  private renderVoicePhase(): void {
+  private renderVoicePhase_abyssPrivate(): void {
     const voice = this.voice?.status(),
       queued = this.owner?.queuedVoice() ?? 0;
     const message =
@@ -838,14 +859,16 @@ export class CommandModeSurface implements CaptureExtension {
       .join(' · ');
     this.voicePhase.hidden = this.voicePhase.textContent === '';
   }
-  private noteReviewStatus(state: CommandSessionSnapshot): 'ready' | 'pending' | 'failed' {
+  private noteReviewStatus_abyssPrivate(
+    state: CommandSessionSnapshot,
+  ): 'ready' | 'pending' | 'failed' {
     return this.notes.reviewStatus({
       sessionId: state.id,
       proposalRevision: state.proposal.revision,
     });
   }
-  private noteReviewMessage(state: CommandSessionSnapshot): string {
-    const review = this.noteReviewStatus(state);
+  private noteReviewMessage_abyssPrivate(state: CommandSessionSnapshot): string {
+    const review = this.noteReviewStatus_abyssPrivate(state);
     if (review === 'ready') return commandMessage('Ready. Enter to save.');
     if (review === 'failed')
       return commandMessage(
@@ -853,11 +876,11 @@ export class CommandModeSurface implements CaptureExtension {
       );
     return commandMessage('Loading note preview…');
   }
-  private clearPhaseTimer(): void {
+  private clearPhaseTimer_abyssPrivate(): void {
     this.phase.win.clearTimeout(this.phaseTimer);
     this.phaseTimer = undefined;
   }
-  private navigateSaved(state: CommandSessionSnapshot): void {
+  private navigateSaved_abyssPrivate(state: CommandSessionSnapshot): void {
     const task = state.focus.find(
       (focus) => focus.kind === 'task' && focus.plan === undefined && focus.revision !== undefined,
     );
@@ -886,31 +909,32 @@ export class CommandModeSurface implements CaptureExtension {
       commandMessage('Could not open task'),
     );
   }
-  private openHistory(): void {
-    this.updateAvailability();
-    if (this.historyButton.disabled) return;
+  private openHistory_abyssPrivate(): void {
+    this.updateAvailability_abyssPrivate();
+    if (this.historyButton_abyssPrivate.disabled) return;
     if (this.history !== undefined) {
       this.history.close();
       return;
     }
     this.menu?.hide();
-    const generation = ++this.popupGeneration;
+    const generation = ++this.popupGeneration_abyssPrivate;
     this.withOwner(
       (owner) => {
-        this.updateAvailability();
-        if (!this.historyButton.disabled) this.showHistory(this.historyButton, owner);
+        this.updateAvailability_abyssPrivate();
+        if (!this.historyButton_abyssPrivate.disabled)
+          this.showHistory_abyssPrivate(this.historyButton_abyssPrivate, owner);
       },
-      () => generation === this.popupGeneration,
+      () => generation === this.popupGeneration_abyssPrivate,
     );
   }
-  private showHistory(trigger: HTMLElement, owner: CommandSessionOwner): void {
+  private showHistory_abyssPrivate(trigger: HTMLElement, owner: CommandSessionOwner): void {
     this.history = new CommandHistoryPopover({
       capture: this.capture,
       anchor: trigger,
       owner,
       available: () => {
-        this.updateAvailability();
-        return !this.historyButton.disabled;
+        this.updateAvailability_abyssPrivate();
+        return !this.historyButton_abyssPrivate.disabled;
       },
       selected: () => {
         if (this.live) this.setActive(true, 'history');
@@ -921,15 +945,15 @@ export class CommandModeSurface implements CaptureExtension {
     });
   }
   private openMenu(trigger: HTMLElement, event?: MouseEvent): void {
-    if (!this.canOpenMenu(trigger)) return;
+    if (!this.canOpenMenu_abyssPrivate(trigger)) return;
     this.history?.close(false);
     this.menu?.hide();
-    const generation = ++this.popupGeneration;
+    const generation = ++this.popupGeneration_abyssPrivate;
     this.withOwner(
       (owner) => {
         this.showMenu(owner, trigger, event);
       },
-      () => generation === this.popupGeneration,
+      () => generation === this.popupGeneration_abyssPrivate,
     );
   }
   private showMenu(owner: CommandSessionOwner, trigger: HTMLElement, event?: MouseEvent): void {
@@ -937,11 +961,11 @@ export class CommandModeSurface implements CaptureExtension {
     this.menu = menu;
     trigger.setAttribute('aria-expanded', 'true');
     trigger.setAttribute('aria-haspopup', 'menu');
-    if (trigger === this.microphone) this.populateVoiceMenu(menu, owner);
-    else this.populateMenu(menu, owner);
+    if (trigger === this.microphone_abyssPrivate) this.populateVoiceMenu_abyssPrivate(menu, owner);
+    else this.populateMenu_abyssPrivate(menu, owner);
     menu.onHide(() => {
-      this.releaseMenu();
-      this.releaseMenu = () => {};
+      this.releaseMenu_abyssPrivate();
+      this.releaseMenu_abyssPrivate = () => {};
       if (this.menu === menu) this.menu = undefined;
       trigger.setAttribute('aria-expanded', 'false');
       if (this.live && trigger.isConnected) trigger.focus({ preventScroll: true });
@@ -958,7 +982,7 @@ export class CommandModeSurface implements CaptureExtension {
     if (event === undefined) Object.defineProperty(click, 'target', { value: trigger });
     showMenuAtMouseEventWithFocus(menu, click, (surface) => {
       surface.classList.add('abyss-command-history-menu');
-      this.releaseMenu = this.capture.registerSurface(surface);
+      this.releaseMenu_abyssPrivate = this.capture.registerSurface(surface);
       surface.addEventListener('keydown', (key) => {
         if (key.key === 'Escape' && !key.isComposing) {
           key.preventDefault();
@@ -968,10 +992,12 @@ export class CommandModeSurface implements CaptureExtension {
       });
     });
   }
-  private canOpenMenu(trigger: HTMLElement): boolean {
-    return this.toggle.hidden === false || (this.active() && trigger !== this.microphone);
+  private canOpenMenu_abyssPrivate(trigger: HTMLElement): boolean {
+    return (
+      this.toggle.hidden === false || (this.active() && trigger !== this.microphone_abyssPrivate)
+    );
   }
-  private populateVoiceMenu(menu: Menu, owner: CommandSessionOwner): void {
+  private populateVoiceMenu_abyssPrivate(menu: Menu, owner: CommandSessionOwner): void {
     for (const [mode, label] of [
       ['manual', 'Dictation'],
       ['continuous', 'Continuous'],
@@ -988,7 +1014,7 @@ export class CommandModeSurface implements CaptureExtension {
       );
     }
   }
-  private populateMenu(menu: Menu, owner: CommandSessionOwner): void {
+  private populateMenu_abyssPrivate(menu: Menu, owner: CommandSessionOwner): void {
     if (this.toggle.hidden === false)
       menu.addItem((item) =>
         item
@@ -1039,7 +1065,7 @@ export class CommandModeSurface implements CaptureExtension {
       );
   }
 
-  private guardPlannedLink(event: MouseEvent): void {
+  private guardPlannedLink_abyssPrivate(event: MouseEvent): void {
     const win = this.content.ownerDocument.defaultView;
     if (win === null || !(event.target instanceof win.Element)) return;
     const anchor = event.target.closest<HTMLAnchorElement>('a.internal-link');
@@ -1068,13 +1094,13 @@ export class CommandModeSurface implements CaptureExtension {
       );
     this.voice?.dispose();
     this.waveform.destroy();
-    this.clearPhaseTimer();
+    this.clearPhaseTimer_abyssPrivate();
     this.elapsed.dispose();
     this.menu?.hide();
     this.history?.close(false);
-    this.releaseMenu();
-    this.unsubscribe?.();
-    this.releaseNoteReview();
+    this.releaseMenu_abyssPrivate();
+    this.unsubscribe_abyssPrivate?.();
+    this.releaseNoteReview_abyssPrivate();
     this.tree?.destroy();
     this.projects.destroy();
     this.notes.destroy();

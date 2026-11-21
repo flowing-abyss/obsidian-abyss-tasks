@@ -3,6 +3,7 @@ import { Component, Notice, setIcon } from 'obsidian';
 import type { AppState, InspectorHistoryFrame } from '../app/AppState';
 import type { TaskSearchApi } from '../tasks';
 import type { LocalSearchScopeHost } from '../ui/localSearchKeys';
+import type { TaskContextAction } from '../ui/taskContextMenu';
 import type { TaskDependencySearchProvider } from '../ui/TaskDependencySearchProvider';
 import { InspectorDependencies } from './right/InspectorDependencies';
 import { mountInspectorFieldVisibility } from './right/inspectorFieldVisibility';
@@ -99,6 +100,7 @@ import {
 
 interface RightPanelOptions {
   readonly recurrenceInput?: RecurrenceInputParser | undefined;
+  readonly aiContext?: TaskContextAction | undefined;
   readonly onShowInTaskList?: ShowInTaskList | undefined;
   readonly state: AppState;
   readonly app: App;
@@ -402,6 +404,7 @@ export class RightPanel {
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       timeTracking,
       host: {
+        aiContext: options.aiContext,
         showInTaskList:
           options.onShowInTaskList === undefined
             ? undefined

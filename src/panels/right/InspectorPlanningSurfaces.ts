@@ -43,7 +43,11 @@ import { setStatusMarkerCompletionBlocked, updateStatusMarker } from '../../ui/S
 import { showStatusMenuAt, type StatusMenuHandle } from '../../ui/statusMenu';
 import { showTagDropdown } from '../../ui/tagDropdown';
 import { TagPickerModal } from '../../ui/TagPickerModal';
-import { createTaskContextMenu } from '../../ui/taskContextMenu';
+import {
+  aiContextLabel,
+  createTaskContextMenu,
+  type TaskContextAction,
+} from '../../ui/taskContextMenu';
 import { type RightPanelDraftState } from '../../ui/taskDraftContinuity';
 import { taskTimeText } from '../../ui/taskMetadataDisplay';
 import { openInFile } from '../../ui/taskNavigation';
@@ -63,6 +67,7 @@ import type {
 const DURATION_INPUT_EXAMPLE = '1h30m';
 
 interface InspectorPlanningHost {
+  readonly aiContext?: TaskContextAction | undefined;
   readonly showInTaskList?: ((task: TaskLike) => void) | undefined;
   readonly root: () => HTMLElement;
   readonly mounted: () => boolean;
@@ -1416,6 +1421,7 @@ export class InspectorPlanningSurfaces {
     this.#rowMenuCleanup?.();
     const target = taskNodeRef(task);
     const menu = createTaskContextMenu({
+      aiContext: this.#host.aiContext,
       node: task,
       target,
       anchor,
@@ -1483,6 +1489,17 @@ export class InspectorPlanningSurfaces {
     return close;
   }
 
+  #addAiContextMenuItem(menu: HTMLElement, contextTarget: TaskNodeRef): void {
+    const add = this.#host.aiContext?.(contextTarget);
+    if (add !== undefined) {
+      this.#createContextMenuItem(menu, 'abyss-context-item', aiContextLabel(), () => {
+        this.#removeAnchoredSurface(menu);
+        add();
+      });
+      this.#createContextMenuSeparator(menu);
+    }
+  }
+
   renderContextMenu(task: TaskLike, anchor: HTMLElement): void {
     const existing = this.#host.root().querySelector<HTMLElement>('.abyss-task-context-menu');
     if (existing != null) {
@@ -1516,6 +1533,7 @@ export class InspectorPlanningSurfaces {
     const contextTarget = taskNodeRef(task);
     const contextOwner = this.#host.taskOwner(task);
     this.#createContextMenuSeparator(menu);
+    this.#addAiContextMenuItem(menu, contextTarget);
     this.#createContextMenuItem(menu, 'abyss-context-item', 'Open in note', () => {
       this.#removeAnchoredSurface(menu);
       const root = this.#host.stack()[0];

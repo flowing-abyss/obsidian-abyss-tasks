@@ -4,7 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { taskNodeAddress, type TaskCommandResult } from '../src/tasks';
+import { taskNodeAddress, type TaskCommandResult, type TaskNodeRef } from '../src/tasks';
 import { systemClock } from '../src/tasks/domain/clock';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
@@ -454,7 +454,11 @@ describe('task card tracking menu item', () => {
   });
 });
 
-function mountInspector(stack: TrackingStack, title: string) {
+function mountInspector(
+  stack: TrackingStack,
+  title: string,
+  aiContext?: ConstructorParameters<typeof RightPanel>[0]['aiContext'],
+) {
   const located = expectDefined(
     stack.index.listNodes().find(({ node }) => node.title === title),
     `Missing ${title}`,
@@ -468,6 +472,7 @@ function mountInspector(stack: TrackingStack, title: string) {
     win: window,
   });
   const panel = new RightPanel({
+    aiContext,
     state,
     app: stack.app,
     statusRegistry: stack.statusRegistry,
@@ -505,6 +510,21 @@ function inspectorItem(el: HTMLElement, text: string): HTMLElement | undefined {
 }
 
 describe('inspector context menu tracking item', () => {
+  it('adds the inspected child through its own AI menu section', async () => {
+    const stack = await trackingStack('- [ ] Parent\n  - [ ] Child\n');
+    const clicked = vi.fn<(ref: TaskNodeRef) => void>();
+    const { el } = mountInspector(stack, 'Child', (ref) => () => {
+      clicked(ref);
+    });
+    const items = inspectorMenuItems(el);
+    const add = expectDefined(items.find((x) => x.textContent === 'Add to AI context'));
+    expect(add.previousElementSibling?.getAttribute('role')).toBe('separator');
+    expect(add.nextElementSibling?.getAttribute('role')).toBe('separator');
+    expect(add.nextElementSibling?.nextElementSibling?.textContent).toBe('Open in note');
+    add.click();
+    expect(clicked).toHaveBeenCalledExactlyOnceWith(stack.index.listNodes()[1]?.target);
+    expect(el.querySelector('.abyss-task-context-menu')).toBeNull();
+  });
   it('separates Open in note from root edit and danger groups', async () => {
     const harness = await inspector(UNTRACKED);
     const items = inspectorMenuItems(harness.el);

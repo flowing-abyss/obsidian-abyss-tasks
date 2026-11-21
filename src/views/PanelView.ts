@@ -140,6 +140,9 @@ export interface PanelCommandServices {
   readonly transcription?: CommandTranscriptionPort;
   readonly owner: () => CommandSessionOwner | Promise<CommandSessionOwner>;
   readonly memory: CommandSurfaceMemory;
+  readonly commandTaskTarget?: (
+    ref: TaskNodeRef,
+  ) => { target: string; revision: string } | undefined;
   readonly nativeTarget: (target: string, revision: string) => TaskNodeRef | undefined;
 }
 type PanelViewDependencies = [
@@ -783,12 +786,40 @@ export class PanelView extends ItemView {
     });
   }
 
+  private aiContext_abyssPrivate(ref: TaskNodeRef): (() => void) | undefined {
+    const command = this.command_abyssPrivate;
+    if (command?.availability?.().agent !== true || command.commandTaskTarget === undefined)
+      return undefined;
+    return () => {
+      if (command.availability?.().agent !== true) return;
+      const task = command.commandTaskTarget?.(ref);
+      if (task === undefined) {
+        new Notice('Task changed or is unavailable. Select it again.');
+        return;
+      }
+      this.compactPaneAccess_abyssPrivate.cancelPending();
+      this.compactPaneAccess_abyssPrivate.close(false);
+      this.quickCapture_abyssPrivate?.openOrFocus(task);
+    };
+  }
+
   private createPanels_abyssPrivate(
     selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi,
     projectStore: ProjectStore,
     projectManager: ProjectManager,
   ): void {
     const timeTracking = this.createTrackingSurface_abyssPrivate();
+    const shared = {
+      aiContext: (ref: TaskNodeRef) => this.aiContext_abyssPrivate(ref),
+      recurrenceInput: this.taskInputServices_abyssPrivate?.recurrence,
+      state: this.state_abyssPrivate,
+      app: this.app,
+      settings: this.settings_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      commentTimeContext: this.commentTimeContext_abyssPrivate,
+      interactionOwnership: this.interactionRegistry_abyssPrivate,
+      timeTracking,
+    };
     this.rail_abyssPrivate = new RailPanel(
       this.state_abyssPrivate,
       this.app as never,
@@ -796,21 +827,16 @@ export class PanelView extends ItemView {
       this.statisticsSource_abyssPrivate !== undefined,
     );
     this.center_abyssPrivate = new CenterPanel({
-      recurrenceInput: this.taskInputServices_abyssPrivate?.recurrence,
+      ...shared,
       statisticsSource: this.statisticsSource_abyssPrivate,
       onTaskListDraftHandoff: (drafts, root, selection) =>
         this.right_abyssPrivate.receiveDraftHandoff(drafts, root, selection),
       ...(this.search_abyssPrivate === undefined ? {} : { search: this.search_abyssPrivate }),
-      state: this.state_abyssPrivate,
-      app: this.app,
-      settings: this.settings_abyssPrivate,
       queries: this.queries_abyssPrivate,
-      statusRegistry: this.statusRegistry_abyssPrivate,
       onSaveSettings: this.onSaveSettings_abyssPrivate,
       projectStore,
       projectManager,
       tasks: selectionTasks,
-      commentTimeContext: this.commentTimeContext_abyssPrivate,
       captureApplication: selectionTasks,
       onCreationResult: (result, description, revealAuthority) => {
         this.presentCreationResult_abyssPrivate(result, description, revealAuthority);
@@ -821,10 +847,8 @@ export class PanelView extends ItemView {
         this.creationPresentation_abyssPrivate?.afterRender(root);
         this.checkSearchOpportunity_abyssPrivate();
       },
-      interactionOwnership: this.interactionRegistry_abyssPrivate,
       navigation: this.panelNavigation_abyssPrivate,
       onSaveViewState: this.onSaveViewState_abyssPrivate,
-      timeTracking,
       onRenderTaskHeaderActions: (header, _title, controls) => {
         this.compactPaneAccess_abyssPrivate.attachHeader(header, controls);
       },
@@ -835,7 +859,7 @@ export class PanelView extends ItemView {
       projectManager,
     );
     this.right_abyssPrivate = new RightPanel({
-      recurrenceInput: this.taskInputServices_abyssPrivate?.recurrence,
+      ...shared,
       localSearchScope:
         this.localScope_abyssPrivate === undefined
           ? undefined
@@ -843,10 +867,6 @@ export class PanelView extends ItemView {
               parent: this.localScope_abyssPrivate,
               keymap: this.app.keymap,
             },
-      state: this.state_abyssPrivate,
-      app: this.app,
-      statusRegistry: this.statusRegistry_abyssPrivate,
-      settings: this.settings_abyssPrivate,
       tasks: this.createInspectorTasks_abyssPrivate(selectionTasks),
       search: this.search_abyssPrivate,
       onShowInTaskList: (target, request) =>
@@ -858,9 +878,6 @@ export class PanelView extends ItemView {
           this.center_abyssPrivate.onInspectorMutation(event);
         }
       },
-      commentTimeContext: this.commentTimeContext_abyssPrivate,
-      interactionOwnership: this.interactionRegistry_abyssPrivate,
-      timeTracking,
     });
   }
 

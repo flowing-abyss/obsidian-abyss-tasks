@@ -35,6 +35,7 @@ export const microphoneUnavailableMessage = 'Microphone unavailable. Try the mic
 export const recordingFailedMessage = 'Recording failed. Try the microphone again.';
 
 const russian = {
+  'Add to AI context': 'Добавить в ИИ-контекст',
   'Review the prepared changes before saving them.':
     'Проверьте подготовленные изменения перед сохранением.',
   queued: 'в очереди',

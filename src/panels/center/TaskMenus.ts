@@ -24,6 +24,7 @@ import {
   applyPriorityFlagColor,
   createTaskContextMenu,
   getSubmenu,
+  type TaskContextAction,
 } from '../../ui/taskContextMenu';
 import { openInFile } from '../../ui/taskNavigation';
 import type { TrackingSurface } from '../../ui/timeTracking/TimeBadge';
@@ -76,6 +77,7 @@ interface TaskMenusHost {
 }
 
 interface TaskMenusOptions {
+  readonly aiContext?: TaskContextAction | undefined;
   readonly app: App;
   readonly queries: TaskQueryApi;
   readonly settings: CalendarSettings;
@@ -99,6 +101,7 @@ export class TaskMenus {
     representedTags: readonly string[] = [],
   ): Menu {
     return createTaskContextMenu({
+      aiContext: this.#options.aiContext,
       node: commandNode(task),
       target: commandTarget(task),
       anchor: card,

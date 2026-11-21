@@ -7,7 +7,12 @@ import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import { describeTaskCreationResult, type CreationResultDescription } from '../taskCommandResult';
 import { CaptureRevealIntent, type CaptureRevealAuthority } from './CaptureRevealIntent';
-import { CaptureSurface, type CaptureExtension, type CaptureExtensionHost } from './CaptureSurface';
+import {
+  CaptureSurface,
+  type CaptureExtension,
+  type CaptureExtensionHost,
+  type CaptureTaskTarget,
+} from './CaptureSurface';
 import type { CaptureContext, CaptureTarget } from './CaptureTargetResolver';
 import { TaskCaptureController, type CaptureSmartOptions } from './TaskCaptureController';
 
@@ -73,8 +78,15 @@ export class QuickCaptureCoordinator {
     return this.currentPhase === 'open' && this.controller?.snapshot().phase === 'submitting';
   }
 
-  openOrFocus(): void {
-    if (this.destroyed || this.currentPhase === 'resolving') return;
+  private pendingTasks: CaptureTaskTarget[] = [];
+
+  openOrFocus(task?: CaptureTaskTarget): void {
+    if (this.destroyed) return;
+    if (task !== undefined) {
+      if (this.surface !== null) this.surface.addTask(task);
+      else this.pendingTasks.push(task);
+    }
+    if (this.currentPhase === 'resolving') return;
     if (this.currentPhase === 'open') {
       this.surface?.focus();
       return;
@@ -169,6 +181,7 @@ export class QuickCaptureCoordinator {
 
     this.controller = controller;
     this.surface = surface;
+    for (const task of this.pendingTasks.splice(0)) surface.addTask(task);
     this.currentPhase = 'open';
     this.revealIntent?.mount(surface.input);
     surface.focus();
@@ -295,6 +308,7 @@ export class QuickCaptureCoordinator {
   private releaseCurrentGeneration(restoreFocus = false): void {
     ++this.generation;
     ++this.surfaceGeneration;
+    this.pendingTasks = [];
     this.currentPhase = 'closed';
     const surface = this.surface;
     const controller = this.controller;

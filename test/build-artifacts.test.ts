@@ -35,6 +35,8 @@ const privateOwners = new Set([
   'CenterPanel',
   'RightPanel',
   'PanelView',
+  // Host DOM and session controls are private to the mounted capture extension.
+  'CommandModeSurface',
   'CalendarSettingsTab',
   'ObsidianTaskRepository',
   'TaskBlockEditor',

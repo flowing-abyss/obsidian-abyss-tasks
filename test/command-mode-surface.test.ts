@@ -425,6 +425,34 @@ function enter(surface: Pick<CaptureSurface, 'input'>, text: string) {
     new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
   );
 }
+it('opens command mode with the clicked occurrence and keeps previously added tasks', async () => {
+  const h = await setup({
+    'a.md': '- [ ] Same title\n  - [ ] Child only here\n- [ ] Same title\n',
+  });
+  const nodes = h.index.listNodes();
+  const child = expectDefined(nodes.find(({ target }) => target.type === 'subtask'));
+  const other = expectDefined(nodes[nodes.length - 1]);
+  const first = expectDefined(h.provider.commandTaskTarget(child.target));
+  const second = expectDefined(h.provider.commandTaskTarget(other.target));
+  expect(first.target).not.toBe(second.target);
+  h.memory.active = false;
+  const { coordinator, host } = await h.mountCoordinator();
+  coordinator.close();
+  coordinator.openOrFocus(first);
+  await vi.waitFor(() => {
+    expect(host.querySelector('.abyss-command-tree')?.textContent).toContain('Child only here');
+  });
+  coordinator.openOrFocus(second);
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().focus.map((f) => f.target)).toEqual([first.target, second.target]);
+  });
+  coordinator.openOrFocus(first);
+  await flushMicrotasks(0);
+  expect(h.owner.snapshot().focus).toHaveLength(2);
+  expect(h.owner.snapshot().exchanges).toHaveLength(0);
+  await h.external('a.md', '- [ ] Replacement\n');
+  expect(h.provider.commandTaskTarget(child.target)).toBeUndefined();
+});
 it('orders the four native toolbar controls and renders one canonical owner tree without ordinary writes', async () => {
   const h = await setup();
   const surface = h.mount();

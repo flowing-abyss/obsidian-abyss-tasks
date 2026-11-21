@@ -1,4 +1,4 @@
-import { Modal, Scope, type App } from 'obsidian';
+import { Modal, Notice, Scope, type App } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
@@ -32,6 +32,7 @@ import {
   localSearchSurfaceIsVisible,
 } from './localSearchKeys';
 import { presentTaskCommandResult } from './taskCommandResult';
+import type { TaskContextAction } from './taskContextMenu';
 import {
   isDirtyDraftBundle,
   type RightPanelDraftBundle,
@@ -53,6 +54,7 @@ import { TrackingTicker } from './timeTracking/TrackingTicker';
 import { createTrackingActions } from './timeTracking/trackingActions';
 
 interface TaskModalOptions {
+  readonly aiContext?: TaskContextAction | undefined;
   readonly recurrenceInput?: RecurrenceInputParser | undefined;
   readonly onTaskListDraftHandoff?: TaskListDraftHandoff | undefined;
   readonly onShowInTaskList?: ShowInTaskList | undefined;
@@ -109,6 +111,7 @@ export class TaskModal {
   private readonly settings_abyssPrivate: CalendarSettings | undefined;
   private readonly queries_abyssPrivate: TaskQueryApi | undefined;
   private readonly onTaskListDraftHandoff_abyssPrivate: TaskListDraftHandoff | undefined;
+  private readonly aiContext_abyssPrivate: TaskContextAction | undefined;
   private readonly onShowInTaskList_abyssPrivate: ShowInTaskList | undefined;
   private readonly search_abyssPrivate: TaskSearchApi | undefined;
   private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
@@ -147,6 +150,7 @@ export class TaskModal {
     this.settings_abyssPrivate = settings;
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
+    this.aiContext_abyssPrivate = options.aiContext;
     this.search_abyssPrivate = options.search;
     this.onShowInTaskList_abyssPrivate = options.onShowInTaskList;
     this.onTaskListDraftHandoff_abyssPrivate = options.onTaskListDraftHandoff;
@@ -213,6 +217,7 @@ export class TaskModal {
     const scope = host.scope;
     this.innerPanel_abyssPrivate = new RightPanel({
       recurrenceInput: this.recurrenceInput_abyssPrivate,
+      aiContext: (target) => this.aiHandoff_abyssPrivate(target, openingState),
       localSearchScope: { parent: scope, keymap: this.app_abyssPrivate.keymap },
       state: this.innerState_abyssPrivate,
       app: this.app_abyssPrivate,
@@ -245,6 +250,24 @@ export class TaskModal {
 
     host.open();
     this.bindScope_abyssPrivate(modal, scope);
+  }
+
+  private aiHandoff_abyssPrivate(
+    target: TaskNodeRef,
+    openingState: AppState,
+  ): (() => void) | undefined {
+    const add = this.aiContext_abyssPrivate?.(target);
+    if (add === undefined) return undefined;
+    return () => {
+      if (this.innerState_abyssPrivate !== openingState) return;
+      const drafts = this.innerPanel_abyssPrivate?.captureDraftHandoff();
+      if (drafts !== undefined && (isDirtyDraftBundle(drafts.live) || drafts.detached.length > 0)) {
+        new Notice('Finish editing before opening AI context.');
+        return;
+      }
+      this.close();
+      add();
+    };
   }
 
   private listHandoff_abyssPrivate(openingState: AppState): ShowInTaskList | undefined {

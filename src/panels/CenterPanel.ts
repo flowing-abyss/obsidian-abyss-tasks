@@ -74,6 +74,7 @@ import { runAsyncAction } from '../ui/runAsyncAction';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import type { CaptureRevealAuthority } from '../ui/taskCapture/CaptureRevealIntent';
 import { type CreationResultDescription } from '../ui/taskCommandResult';
+import type { TaskContextAction } from '../ui/taskContextMenu';
 import type { TaskDependencyLookup } from '../ui/taskDependencyPresentation';
 import type { TaskListDraftHandoff } from '../ui/taskDraftContinuity';
 import { bindTaskHierarchyDrop, executeTaskHierarchy } from '../ui/taskHierarchyActions';
@@ -237,6 +238,7 @@ interface CreationInclusion {
 }
 
 interface CenterPanelOptions {
+  readonly aiContext?: TaskContextAction | undefined;
   readonly recurrenceInput?: RecurrenceInputParser | undefined;
   readonly statisticsSource?: TaskStatisticsSource | undefined;
   readonly onTaskListDraftHandoff?: TaskListDraftHandoff | undefined;
@@ -272,6 +274,7 @@ interface CenterPanelOptions {
 }
 
 export class CenterPanel {
+  private readonly aiContext_abyssPrivate: TaskContextAction | undefined;
   private readonly onTaskListDraftHandoff_abyssPrivate: TaskListDraftHandoff | undefined;
   private el!: HTMLElement;
   private readonly statistics_abyssPrivate: StatisticsMode | undefined;
@@ -418,6 +421,7 @@ export class CenterPanel {
 
   constructor(options: CenterPanelOptions) {
     ({
+      aiContext: this.aiContext_abyssPrivate,
       recurrenceInput: this.recurrenceInput_abyssPrivate,
       onTaskListDraftHandoff: this.onTaskListDraftHandoff_abyssPrivate,
     } = options);
@@ -2281,6 +2285,7 @@ export class CenterPanel {
 
   private createTaskMenus_abyssPrivate(): TaskMenus {
     return new TaskMenus({
+      aiContext: this.aiContext_abyssPrivate,
       app: this.app_abyssPrivate,
       queries: this.queries_abyssPrivate,
       settings: this.settings_abyssPrivate,
@@ -2459,6 +2464,7 @@ export class CenterPanel {
 
   private initializeOwnedUi_abyssPrivate(): void {
     this.taskModal_abyssPrivate = new TaskModal({
+      aiContext: this.aiContext_abyssPrivate,
       recurrenceInput: this.recurrenceInput_abyssPrivate,
       app: this.app_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
