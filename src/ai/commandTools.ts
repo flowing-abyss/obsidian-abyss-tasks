@@ -145,6 +145,7 @@ export interface CommandToolContext {
   readonly rejected: Set<string>;
   controlRepair?: { intent: unknown; scoped?: boolean };
   account?: (id?: string) => void;
+  terminalSave?: boolean;
   immediate: boolean;
   done: boolean;
   readonly errors: Set<string>;
@@ -1192,6 +1193,7 @@ class CommandToolOwner {
           intent === 'immediate',
           scope,
         ));
+      this.ctx_abyssPrivate.terminalSave = confirmed;
       if (intent === 'confirm' && scope === undefined)
         this.reportDeclinedConfirmation_abyssPrivate(confirmed);
       return { confirmed };
@@ -1251,11 +1253,9 @@ class CommandToolOwner {
       return {
         started:
           this.ctx_abyssPrivate.basis.blocked &&
-          (await this.ctx_abyssPrivate.session.newSession(
-            'keep',
-            this.ctx_abyssPrivate.signal,
-            true,
-          )),
+          (await this.ctx_abyssPrivate.session.newSession('keep', this.ctx_abyssPrivate.signal, {
+            acknowledgeUncertainty: true,
+          })),
       };
     }
     if (input.intent === 'review') {
@@ -2458,7 +2458,10 @@ class CommandToolOwner {
       this.ctx_abyssPrivate.session.question(required(question));
       return { finished: true };
     }
-    return { finished: await this.publishReady_abyssPrivate(result), result };
+    return {
+      finished: await this.publishReady_abyssPrivate(result, input.selection !== undefined),
+      result,
+    };
   }
   private checkFinishEvidence_abyssPrivate(
     input: z.infer<typeof finishSchema>,
@@ -2501,7 +2504,10 @@ class CommandToolOwner {
   private acceptPreparation_abyssPrivate(): void {
     this.preparedRevision_abyssPrivate = this.ctx_abyssPrivate.session.snapshot().proposal.revision;
   }
-  private async publishReady_abyssPrivate(result: string | undefined): Promise<boolean> {
+  private async publishReady_abyssPrivate(
+    result: string | undefined,
+    keepSelection: boolean,
+  ): Promise<boolean> {
     const current = this.ctx_abyssPrivate.session.snapshot();
     this.checkImmediatePreparation_abyssPrivate(current);
     const grant = this.writeGrant_abyssPrivate;
@@ -2523,11 +2529,7 @@ class CommandToolOwner {
     this.ctx_abyssPrivate.session.finishReview();
     let finished = true;
     if (this.ctx_abyssPrivate.immediate)
-      finished = await this.ctx_abyssPrivate.session.confirmFromTurn(
-        current.proposal.revision,
-        this.ctx_abyssPrivate.signal,
-        true,
-      );
+      finished = await this.savePrepared_abyssPrivate(current.proposal.revision, keepSelection);
     else {
       let message: Parameters<typeof commandMessage>[0] = 'Ready.';
       if (result === 'prepared')
@@ -2541,6 +2543,15 @@ class CommandToolOwner {
       this.ctx_abyssPrivate.session.snapshot().status.message,
     );
     return finished;
+  }
+  private async savePrepared_abyssPrivate(
+    revision: number,
+    keepSelection: boolean,
+  ): Promise<boolean> {
+    const ctx = this.ctx_abyssPrivate;
+    const saved = await ctx.session.confirmFromTurn(revision, ctx.signal, true);
+    ctx.terminalSave = saved && !keepSelection;
+    return saved;
   }
   private checkImmediatePreparation_abyssPrivate(current: CommandSessionSnapshot): void {
     if (

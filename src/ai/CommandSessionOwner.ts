@@ -366,13 +366,27 @@ export class CommandSessionOwner {
     surface: SubmissionSurface | undefined,
     admission: () => boolean,
   ): Promise<void> {
-    const turn = { visibility: surface?.visibility };
+    const turn = { visibility: surface?.visibility },
+      submission = this.captureSubmission(surface?.visibility),
+      input = this.captureInput();
     try {
-      await this.session.submit(text, basis, this.noteReview(surface?.noteReview), () => {
-        if (!admission()) return false;
-        this.voiceTurn = turn;
-        return true;
-      });
+      const outcome = await this.session.submit(
+        text,
+        basis,
+        this.noteReview(surface?.noteReview),
+        () => {
+          if (!admission()) return false;
+          this.voiceTurn = turn;
+          return true;
+        },
+      );
+      if (outcome === 'terminal-save')
+        await this.transition(() =>
+          this.finishSavedSession(
+            () =>
+              submission.continuationCurrent() && input.current() && this.voiceQueue.length === 0,
+          ),
+        );
     } finally {
       if (this.voiceTurn === turn) this.voiceTurn = undefined;
     }
@@ -525,13 +539,23 @@ export class CommandSessionOwner {
       if (state.proposal.changes.length > 0) {
         if (!(await this.saveToFinish(expectedRevision, surface))) return false;
       } else await this.flush();
-      const next = this.session.snapshot();
-      if (!current() || next.proposal.changes.length !== 0 || !this.canFinishSession(next))
-        return false;
-      this.retireVoice();
-      this.stopCapture();
-      return this.startSession();
+      return this.finishSavedSession(current);
     });
+  }
+  private async finishSavedSession(current: () => boolean): Promise<boolean> {
+    const next = this.session.snapshot();
+    if (
+      !current() ||
+      next.input.trim() !== '' ||
+      next.proposal.changes.length !== 0 ||
+      !this.canFinishSession(next)
+    )
+      return false;
+    this.retireVoice();
+    this.stopCapture();
+    const started = await this.session.newSession(undefined, undefined, { current });
+    if (!started && !current() && this.session.snapshot().id === next.id) await this.flush();
+    return started;
   }
   private async saveToFinish(revision: number, surface?: symbol): Promise<boolean> {
     const submitted = ++this.submitted;
@@ -670,7 +694,7 @@ export class CommandSessionOwner {
     this.interaction++;
     return this.transition(async () => {
       if (this.disposed || !this.snapshot().blocked) return false;
-      return this.session.newSession('keep', undefined, true);
+      return this.session.newSession('keep', undefined, { acknowledgeUncertainty: true });
     });
   }
   resolveTransition(

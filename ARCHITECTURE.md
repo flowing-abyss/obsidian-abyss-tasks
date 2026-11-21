@@ -216,7 +216,10 @@ pending comments and date changes in the proposal. [commandSelection](src/ai/com
 dependencies and prepares the approved subset through the public client. After a partial
 field save, the committed request ID anchors the refresh of that task's remaining edits.
 If that fails, the session retains the receipt and blocks a repeat save. Empty Enter follows the panel's confirmation path. An explicit instruction to
-save new work immediately has a separate check on the completed proposal.
+save new work immediately has a separate check on the completed proposal. After a terminal
+agent save, the panel archives the verified journal and opens a fresh session when the
+proposal is empty and the composer has received no further edits. Compound commands
+continue in the same session.
 
 The [write coordinator](src/ai/commandWrites.ts) records admitted work in the journal before
 dispatch. Stop prevents the next batch operation. A request already dispatched may still

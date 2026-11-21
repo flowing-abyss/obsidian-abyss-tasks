@@ -27,6 +27,7 @@ import {
   type CommandAgentPort,
   type CommandResearchPort,
   type CommandSessionSnapshot,
+  type CommandTurnOutcome,
 } from './commandTypes';
 import {
   COMMAND_CONTEXT_CHARACTERS,
@@ -601,7 +602,7 @@ export class CommandAgent implements CommandAgentPort {
       ),
     ];
   }
-  async run(input: Parameters<CommandAgentPort['run']>[0]): Promise<void> {
+  async run(input: Parameters<CommandAgentPort['run']>[0]): Promise<CommandTurnOutcome> {
     const start = this.options.now();
     const ctx = this.context(input, start);
     const model = this.model(ctx, input.signal);
@@ -673,6 +674,7 @@ export class CommandAgent implements CommandAgentPort {
       ctx,
       result.steps.some((step) => step.content.some((part) => part.type === 'tool-error')),
     );
+    if (ctx.terminalSave === true) return 'terminal-save';
   }
   private requireFinished(ctx: CommandToolContext, failed: boolean): void {
     if (ctx.done && ctx.errors.size === 0 && !ctx.pendingOperations.unresolved) return;

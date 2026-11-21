@@ -191,8 +191,13 @@ export interface CommandSessionSnapshot {
   readonly actual: readonly TaskTreeV1[];
   readonly blocked: boolean;
 }
+export type CommandTurnOutcome = 'terminal-save' | void;
 export interface CommandAgentPort {
-  run(input: { text: string; signal: AbortSignal; session: CommandSessionSnapshot }): Promise<void>;
+  run(input: {
+    text: string;
+    signal: AbortSignal;
+    session: CommandSessionSnapshot;
+  }): Promise<CommandTurnOutcome>;
 }
 /** Required awaited durability boundary. Task9 supplies device/vault persistence; never default to a no-op. */
 export interface CommandJournalPort {

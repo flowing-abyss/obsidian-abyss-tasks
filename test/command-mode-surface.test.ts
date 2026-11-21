@@ -4357,6 +4357,216 @@ it('voice failure leaves typed input and proposal available for the next deliber
   expect(transcribe).toHaveBeenCalledTimes(2);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
+it.each(['immediate', 'save and focus', 'save-then-plan'] as const)(
+  'starts the next session only for the terminal %s workflow',
+  async (intent) => {
+    const h = await setup();
+    const surface = h.mount();
+    const id = h.owner.snapshot().id;
+    const immediate = intent !== 'save-then-plan';
+    if (!immediate) {
+      enter(surface, 'Prepare the parent task');
+      await vi.waitFor(() => {
+        expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+      });
+    }
+    const message = {
+      immediate: 'Create and save Next',
+      'save and focus': 'Create and save Next and focus it',
+      'save-then-plan': 'Save this and prepare Next',
+    }[intent];
+    scriptedAgent(h, [
+      {
+        tool: 'interpret',
+        input: {
+          intent: immediate ? 'immediate' : intent,
+          approval: message,
+          saveInstruction: message,
+          research: false,
+        },
+      },
+      {
+        tool: 'create_task',
+        input: {
+          destination: { type: 'note', path: 'a.md', insertion: { type: 'append' } },
+          tree: { markdownTitle: 'Next' },
+        },
+      },
+      {
+        tool: 'finish',
+        input: () => {
+          if (intent !== 'save and focus') return { state: 'ready' };
+          const change = h.owner.snapshot().proposal.changes[0];
+          if (change?.kind !== 'task' || change.plan.after === null)
+            throw Error('Missing Next draft');
+          return {
+            state: 'ready',
+            selection: [
+              {
+                kind: 'task',
+                target: change.plan.after.target,
+                plan: change.plan.target,
+                expectedPlanRevision: change.plan.revision,
+              },
+            ],
+          };
+        },
+      },
+    ]);
+    enter(surface, message);
+    await vi.waitFor(() => {
+      expect(h.owner.commandPending()).toBe(false);
+      expect(h.owner.snapshot().status.kind, h.owner.snapshot().status.message).toBe(
+        intent === 'save and focus' ? 'saved' : 'ready',
+      );
+      expect(h.owner.snapshot().id === id).toBe(intent !== 'immediate');
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(immediate ? 0 : 1);
+    });
+    expect(await h.read('a.md')).toContain(immediate ? 'Next' : 'Parent');
+    if (intent === 'save and focus') expect(h.owner.snapshot().focus).toHaveLength(1);
+    if (!immediate) expect(await h.read('a.md')).not.toContain('Next');
+  },
+);
+it('keeps the unsaved remainder of a scoped terminal approval active', async () => {
+  const h = await setup();
+  const surface = h.mount();
+  enter(surface, 'Prepare the parent task');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  });
+  const note = await expectDefined(h.api.notes).prepare({
+    kind: 'create',
+    path: 'Later.md',
+    title: 'Later',
+    text: 'Pending',
+  });
+  if (!note.ok) throw new Error(note.error.message);
+  h.session.stage({ kind: 'note', plan: note.value });
+  const before = h.owner.snapshot();
+  const message = 'Save only Parent';
+  scriptedAgent(h, [
+    {
+      tool: 'interpret',
+      input: {
+        intent: 'confirm',
+        approval: message,
+        scope: {
+          proposalRevision: before.proposal.revision,
+          changes: [{ kind: 'change', index: 0 }],
+        },
+      },
+    },
+  ]);
+  enter(surface, message);
+  await vi.waitFor(() => {
+    expect(h.owner.commandPending()).toBe(false);
+    expect(h.owner.snapshot().proposal.changes.map((change) => change.kind)).toEqual(['note']);
+  });
+  expect(h.owner.snapshot().id).toBe(before.id);
+  expect(h.owner.snapshot().journal).toHaveLength(1);
+  expect(h.app.vault.getFileByPath('Later.md')).toBeNull();
+});
+it.each(['failure', 'stop after dispatch'] as const)(
+  'retains the session after terminal confirmation encounters %s',
+  async (fault) => {
+    const dispatched = deferred<void>();
+    const release = deferred<void>();
+    const h = await setup({}, (api) => ({
+      ...api,
+      tasks: {
+        ...api.tasks,
+        create: async (...args) => {
+          dispatched.resolve();
+          await release.promise;
+          if (fault === 'failure') throw new Error('Write failed');
+          return expectDefined(api.tasks.create)(...args);
+        },
+      },
+    }));
+    const surface = h.mount();
+    enter(surface, 'Prepare the parent task');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+    });
+    const id = h.owner.snapshot().id;
+    scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', approval: 'Save it' } }]);
+    enter(surface, 'Save it');
+    await dispatched.promise;
+    const stopping = fault === 'stop after dispatch' ? h.owner.stop() : undefined;
+    release.resolve();
+    await stopping;
+    await vi.waitFor(() => {
+      expect(h.owner.commandPending()).toBe(false);
+    });
+    expect(h.owner.snapshot().id).toBe(id);
+    expect((await h.read('a.md')).includes('Parent')).toBe(fault === 'stop after dispatch');
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+  },
+);
+it.each(['complete', 'new input', 'input during history selection'] as const)(
+  'handles a terminal typed save with %s through the command surface',
+  async (scenario) => {
+    const h = await setup();
+    const surface = h.mount();
+    enter(surface, 'Prepare the parent task');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+    });
+    const id = h.owner.snapshot().id;
+    scriptedAgent(h, [
+      { tool: 'interpret', input: { intent: 'confirm', approval: 'Save it', research: false } },
+    ]);
+    if (scenario === 'input during history selection') {
+      const write = h.persisted.storage.write;
+      vi.spyOn(h.persisted.storage, 'write').mockImplementation(async (key, value, previous) => {
+        if (
+          key.kind === 'state' &&
+          (JSON.parse(value) as { activeSessionId: string | null }).activeSessionId === null
+        ) {
+          surface.input.value = 'Another thought';
+          surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        await write(key, value, previous);
+      });
+    }
+    const unsubscribe = h.owner.subscribe((state) => {
+      if (
+        scenario === 'new input' &&
+        state.status.kind === 'writing' &&
+        surface.input.value === ''
+      ) {
+        surface.input.value = 'Another thought';
+        surface.input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    try {
+      enter(surface, 'Save it');
+      await vi.waitFor(() => {
+        expect(h.owner.commandPending()).toBe(false);
+        expect(h.owner.snapshot().id === id).toBe(scenario !== 'complete');
+      });
+      const completed =
+        scenario === 'complete'
+          ? expectDefined(h.owner.recent().find((record) => record.snapshot.id === id)).snapshot
+          : h.owner.snapshot();
+      expect(completed.journal).toHaveLength(1);
+      expect(completed.status.kind).toBe('saved');
+      expect((await h.read('a.md')).match(/Parent/g)).toHaveLength(1);
+      expect(surface.input.value).toBe(scenario === 'complete' ? '' : 'Another thought');
+      if (scenario === 'complete') expect(h.owner.snapshot().status.kind).toBe('ready');
+      else {
+        const reloaded = await CommandSessionStore.open({
+          ...h.persisted,
+          now: () => Date.UTC(2026, 7, 1, 12),
+        });
+        expect(reloaded.activeId()).toBe(id);
+        expect(reloaded.record(id)?.snapshot.input).toBe('Another thought');
+      }
+    } finally {
+      unsubscribe();
+    }
+  },
+);
 it.each(['ready', 'pending'])(
   'spoken note confirmation uses the initiating %s render token',
   async (readiness) => {
@@ -4384,16 +4594,20 @@ it.each(['ready', 'pending'])(
         input: { intent: 'confirm', approval: 'Yes, save it', research: false },
       },
     ]);
+    const id = h.owner.snapshot().id;
     await spokenCommand(h, surface, media);
-    await vi.waitFor(() => {
-      expect(h.owner.snapshot().exchanges.filter((e) => e.role === 'user')).toHaveLength(1);
-    });
     if (readiness === 'ready') {
       await vi.waitFor(() => {
-        expect(h.owner.snapshot().status.kind).toBe('saved');
+        expect(h.owner.snapshot().id).not.toBe(id);
       });
+      expect(
+        expectDefined(h.owner.recent().find((record) => record.snapshot.id === id)).snapshot
+          .journal,
+      ).toHaveLength(1);
       expect(await h.read('Voice.md')).toContain('# Reviewed voice note');
     } else {
+      expect(h.owner.snapshot().id).toBe(id);
+      expect(h.owner.snapshot().exchanges.filter((e) => e.role === 'user')).toHaveLength(1);
       expect(h.app.vault.getFileByPath('Voice.md')).toBeNull();
       expect(h.owner.snapshot().journal).toEqual([]);
       wait.resolve();

@@ -55,6 +55,7 @@ import {
   type CommandSubmissionBasis,
   type CommandTransitionBasis,
   type CommandTransitionDisposition,
+  type CommandTurnOutcome,
 } from './commandTypes';
 import { executeCommandWrites } from './commandWrites';
 import { providerFailure } from './providers/providerFailure';
@@ -340,7 +341,7 @@ export class CommandSession {
   private published_abyssPrivate: CommandSessionSnapshot | undefined;
   private readonly listeners_abyssPrivate = new Set<(state: CommandSessionSnapshot) => void>();
   private turn_abyssPrivate: AbortController | undefined;
-  private running_abyssPrivate: Promise<void> | undefined;
+  private running_abyssPrivate: Promise<CommandTurnOutcome> | undefined;
   private pendingWrite_abyssPrivate: Promise<boolean> | undefined;
   private writing_abyssPrivate = false;
   private writeAdmission_abyssPrivate: AbortController | undefined;
@@ -1362,7 +1363,7 @@ export class CommandSession {
     submittedAgainst?: CommandSubmissionBasis,
     review?: CommandNoteReview,
     admission?: () => boolean,
-  ): Promise<void> {
+  ): Promise<CommandTurnOutcome> {
     if (!this.admitSubmission_abyssPrivate(admission)) return;
     const input = this.captureInput();
     if (text.length <= 16000 && text.trim() === '') {
@@ -1370,24 +1371,23 @@ export class CommandSession {
       return;
     }
     if (this.running_abyssPrivate !== undefined || this.pendingWrite_abyssPrivate !== undefined) {
-      await this.submitAfterDrain_abyssPrivate(text, input, admission, () =>
+      return this.submitAfterDrain_abyssPrivate(text, input, admission, () =>
         this.startSubmission_abyssPrivate(text, input, submittedAgainst, review),
       );
-      return;
     }
-    await this.startSubmission_abyssPrivate(text, input, submittedAgainst, review);
+    return this.startSubmission_abyssPrivate(text, input, submittedAgainst, review);
   }
   private async startSubmission_abyssPrivate(
     text: string,
     input: ReturnType<CommandSession['captureInput']>,
     submittedAgainst?: CommandSubmissionBasis,
     review?: CommandNoteReview,
-  ): Promise<void> {
+  ): Promise<CommandTurnOutcome> {
     if (this.rejectOversizedInput_abyssPrivate(text, input)) return;
     const running = this.runTurn_abyssPrivate(text, input, submittedAgainst, review);
     this.running_abyssPrivate = running;
     try {
-      await running;
+      return await running;
     } finally {
       if (this.running_abyssPrivate === running) this.running_abyssPrivate = undefined;
     }
@@ -1396,8 +1396,8 @@ export class CommandSession {
     text: string,
     input: ReturnType<CommandSession['captureInput']>,
     admission: (() => boolean) | undefined,
-    start: () => Promise<void>,
-  ): Promise<void> {
+    start: () => Promise<CommandTurnOutcome>,
+  ): Promise<CommandTurnOutcome> {
     const previous = this.running_abyssPrivate ?? this.pendingWrite_abyssPrivate;
     this.cancelTurn(false);
     const generation = this.acceptance_abyssPrivate;
@@ -1405,7 +1405,7 @@ export class CommandSession {
     await previous;
     if (generation !== this.acceptance_abyssPrivate) return;
     this.queuedInput_abyssPrivate = undefined;
-    if (this.admitSubmission_abyssPrivate(admission)) await start();
+    if (this.admitSubmission_abyssPrivate(admission)) return start();
   }
   private clearAcceptedInput_abyssPrivate(input: { current(): boolean }): void {
     if (input.current()) this.setInput('', false);
@@ -1465,7 +1465,7 @@ export class CommandSession {
     input: ReturnType<CommandSession['captureInput']>,
     submittedAgainst?: CommandSubmissionBasis,
     review?: CommandNoteReview,
-  ): Promise<void> {
+  ): Promise<CommandTurnOutcome> {
     if (this.unavailable_abyssPrivate()) {
       this.status('error', commandMessage('Finish or reconcile the previous operation first.'));
       return;
@@ -1486,17 +1486,15 @@ export class CommandSession {
     };
     this.status('thinking', commandMessage('Working…'));
     try {
-      await this.options_abyssPrivate.agent.run({
+      const outcome = await this.options_abyssPrivate.agent.run({
         text,
         signal: controller.signal,
         session: basis,
       });
-      if (
-        !controller.signal.aborted &&
-        this.state_abyssPrivate.id === snapshot.id &&
-        this.state_abyssPrivate.status.kind === 'thinking'
-      )
+      if (!this.acceptsTurn_abyssPrivate(controller.signal, snapshot.id)) return;
+      if (this.state_abyssPrivate.status.kind === 'thinking')
         this.restoreQuestionStatus_abyssPrivate();
+      return outcome;
     } catch (cause) {
       if (this.acceptsTurn_abyssPrivate(controller.signal, snapshot.id))
         this.status(
@@ -1897,10 +1895,10 @@ export class CommandSession {
   async newSession(
     disposition?: 'keep' | 'discard',
     signal?: AbortSignal,
-    acknowledgeUncertainty = false,
+    options: { acknowledgeUncertainty?: boolean; current?: () => boolean } = {},
   ): Promise<boolean> {
     if (!(await this.transitionAllowed_abyssPrivate(signal))) return false;
-    if (!acknowledgeUncertainty && !this.canLeaveUncertainty()) return false;
+    if (options.acknowledgeUncertainty !== true && !this.canLeaveUncertainty()) return false;
     if (this.state_abyssPrivate.proposal.changes.length > 0 && disposition === undefined) {
       this.requestTransition_abyssPrivate(
         { kind: 'new-session' },
@@ -1908,7 +1906,10 @@ export class CommandSession {
       );
       return false;
     }
-    const archived = this.archivedSnapshot_abyssPrivate(disposition, acknowledgeUncertainty);
+    const archived = this.archivedSnapshot_abyssPrivate(
+      disposition,
+      options.acknowledgeUncertainty,
+    );
     const next = this.empty_abyssPrivate();
     return this.startSession_abyssPrivate(
       archived,
@@ -1921,29 +1922,25 @@ export class CommandSession {
             },
           }
         : next,
-      signal,
+      () =>
+        this.current_abyssPrivate(archived.id) &&
+        signal?.aborted !== true &&
+        options.current?.() !== false,
     );
   }
   private async startSession_abyssPrivate(
     archived: CommandSessionSnapshot,
     next: CommandSessionSnapshot,
-    signal?: AbortSignal,
+    current: () => boolean,
   ): Promise<boolean> {
+    if (!current()) return false;
     try {
       if (this.options_abyssPrivate.transitions !== undefined)
-        await this.options_abyssPrivate.transitions.start(
-          archived,
-          next,
-          () => this.current_abyssPrivate(archived.id) && signal?.aborted !== true,
-        );
-      else {
-        await this.options_abyssPrivate.journal.save(archived);
-        if (signal?.aborted === true) return false;
-      }
-      if (!this.current_abyssPrivate(archived.id)) return false;
-      return this.restore(next, false);
+        await this.options_abyssPrivate.transitions.start(archived, next, current);
+      else await this.options_abyssPrivate.journal.save(archived);
+      return current() && this.restore(next, false);
     } catch {
-      if (signal?.aborted !== true && this.current_abyssPrivate(archived.id))
+      if (current())
         this.status(
           'error',
           commandMessage('Could not retain this session. Keep it open and try again.'),
