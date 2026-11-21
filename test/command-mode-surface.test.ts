@@ -5227,6 +5227,64 @@ it.each(['recording', 'recognizing'] as const)(
     expect(media.getUserMedia).toHaveBeenCalledOnce();
   },
 );
+it.each(['continue', 'stop'])(
+  'respects %s for ordinary speech acquired while a sibling saves its history selection',
+  async (action) => {
+    const h = await setup(),
+      media = voiceMediaWithSampleClock();
+    const selecting = deferred<void>(),
+      release = deferred<void>(),
+      recognition = deferred<string>();
+    h.allowOrdinaryWrites();
+    h.owner.setVoiceMode('continuous');
+    const command = h.mount();
+    enter(command, 'Prepare the parent task');
+    await vi.waitFor(() => {
+      expect(h.owner.commandPending()).toBe(false);
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+    });
+    const savedId = h.owner.snapshot().id;
+    const write = h.persisted.storage.write;
+    vi.spyOn(h.persisted.storage, 'write').mockImplementation(async (key, value, previous) => {
+      if (
+        key.kind === 'state' &&
+        (JSON.parse(value) as { activeSessionId: string | null }).activeSessionId === null
+      ) {
+        selecting.resolve();
+        await release.promise;
+      }
+      await write(key, value, previous);
+    });
+    scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', approval: 'Save it' } }]);
+    enter(command, 'Save it');
+    await selecting.promise;
+    const transcribe = vi.fn<CommandTranscriptionPort['transcribe']>(() => recognition.promise);
+    h.mount(
+      { available: () => {}, transcribe },
+      () => ({ agent: false, voice: true }),
+      undefined,
+      document.body.createDiv(),
+    );
+    await sampleUtterance(media);
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(transcribe).toHaveBeenCalledOnce();
+    const stopping = action === 'stop' ? h.owner.stop() : undefined;
+    release.resolve();
+    await stopping;
+    await vi.waitFor(() => {
+      expect(h.owner.commandPending()).toBe(false);
+    });
+    expect(transcribe.mock.calls[0]?.[1].aborted).toBe(action === 'stop');
+    expect(h.owner.snapshot().id).toBe(savedId);
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+    recognition.resolve('Independent task');
+    await flushMicrotasks(0);
+    expect(h.ordinaryExecute).toHaveBeenCalledTimes(action === 'stop' ? 0 : 1);
+    const note = await h.read('a.md');
+    expect(note.match(/Parent/g)).toHaveLength(1);
+    expect(note.match(/Independent task/g) ?? []).toHaveLength(action === 'stop' ? 0 : 1);
+  },
+);
 it.each(['stop and edit', 'one-click send'] as const)(
   'uses native task creation for standalone Voice (%s) in dictation mode',
   async (gesture) => {

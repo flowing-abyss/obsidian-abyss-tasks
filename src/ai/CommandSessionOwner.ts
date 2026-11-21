@@ -549,11 +549,13 @@ export class CommandSessionOwner {
     });
   }
   private async finishSavedSession(submissionCurrent: () => boolean): Promise<boolean> {
-    const next = this.session.snapshot();
+    const next = this.session.snapshot(),
+      claim = this.captureClaim;
     const current = (): boolean =>
       submissionCurrent() &&
       this.session.snapshot().voiceMode === next.voiceMode &&
-      this.captureClaim?.continuous() !== false;
+      this.captureClaim === claim &&
+      claim?.continuous() !== false;
     if (
       !current() ||
       next.input.trim() !== '' ||
@@ -562,7 +564,7 @@ export class CommandSessionOwner {
     )
       return false;
     this.retireVoice();
-    this.continuingClaim = this.captureClaim;
+    this.continuingClaim = claim;
     try {
       const started = await this.session.newSession(undefined, undefined, {
         current,
