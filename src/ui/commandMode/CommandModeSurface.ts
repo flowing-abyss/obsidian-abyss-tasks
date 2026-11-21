@@ -1022,7 +1022,10 @@ export class CommandModeSurface implements CaptureExtension {
           .setIcon('plus')
           .onClick(() => {
             this.setActive(true);
-            runAsyncAction(owner.newSession(), commandMessage('Could not start a new session'));
+            runAsyncAction(
+              owner.newSession('keep'),
+              commandMessage('Could not start a new session'),
+            );
           }),
       );
     const snapshot = owner.snapshot();

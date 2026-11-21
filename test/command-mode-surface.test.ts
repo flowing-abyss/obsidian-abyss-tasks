@@ -782,22 +782,35 @@ it('blocks owned missing basename links before native navigation and preserves e
   expect(opened).toEqual(['Other/Details']);
   expect(h.app.vault.getAbstractFileByPath('Folder/Details.md')).toBeNull();
 });
-it('offers new session through the send context menu and retains a dirty tree until disposition', async () => {
+it('archives a dirty proposal from the send menu and restores it from history', async () => {
   const h = await setup();
   const shown = captureMenus();
   const surface = h.mount();
-  enter(surface, 'Create');
-  await flushMicrotasks(0);
+  enter(surface, 'Create a parent with two children');
+  await vi.waitFor(() => {
+    expect(surface.element.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+  });
+  const draftId = h.owner.snapshot().id;
   openActions(surface);
   expectDefined(shown[0]).pick('New session');
-  await flushMicrotasks(0);
-  expect(h.owner.snapshot().pendingTransition?.kind).toBe('new-session');
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().id).not.toBe(draftId);
+  });
+  expect(h.owner.snapshot().proposal.changes).toEqual([]);
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
+
+  expectDefined(historyRows(openHistory(surface))[0]).click();
+  await vi.waitFor(() => {
+    expect(h.owner.snapshot().id).toBe(draftId);
+    expect(surface.element.querySelectorAll('.abyss-subtask-row')).toHaveLength(2);
+  });
+  expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+  expect(surface.element.querySelector('[aria-label="Save proposal"]')).not.toBeNull();
   expect(surface.element.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
-  openActions(surface);
-  expectDefined(shown[1]).pick('Keep for later');
-  await flushMicrotasks(0);
-  expect(h.owner.snapshot().proposal.changes).toHaveLength(0);
-  expect(h.owner.recent().some((record) => record.snapshot.proposal.changes.length > 0)).toBe(true);
+  expect(surface.element.querySelector('.abyss-command-tree')?.textContent).toContain(
+    'Second child only',
+  );
+  expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
 
 async function noteFocusTransition() {
