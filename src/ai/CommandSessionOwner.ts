@@ -542,8 +542,9 @@ export class CommandSessionOwner {
       return this.finishSavedSession(current);
     });
   }
-  private async finishSavedSession(current: () => boolean): Promise<boolean> {
+  private async finishSavedSession(submissionCurrent: () => boolean): Promise<boolean> {
     const next = this.session.snapshot();
+    const current = (): boolean => submissionCurrent() && this.captureClaim?.continuous() !== false;
     if (
       !current() ||
       next.input.trim() !== '' ||

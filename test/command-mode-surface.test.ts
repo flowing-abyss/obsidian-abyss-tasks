@@ -4640,6 +4640,61 @@ it('speech captured before a proposal revision change cannot confirm the newer p
   expect(h.owner.snapshot().journal).toEqual([]);
   expect(surface.element.querySelector('.abyss-command-latest')?.textContent).toBe('Confirm it');
 });
+it.each(['recording', 'recognizing', 'continuous listening'] as const)(
+  'finishes a typed save with a follow-up microphone %s',
+  async (phase) => {
+    const dispatched = deferred<void>(),
+      release = deferred<void>(),
+      recognition = deferred<string>();
+    const h = await setup({}, (api) => ({
+      ...api,
+      tasks: {
+        ...api.tasks,
+        create: async (...args) => {
+          dispatched.resolve();
+          await release.promise;
+          return expectDefined(api.tasks.create)(...args);
+        },
+      },
+    }));
+    const media = voiceMediaWithSampleClock();
+    const transcribe = vi.fn(() => recognition.promise);
+    const surface = h.mount({ available: () => {}, transcribe });
+    enter(surface, 'Prepare the parent task');
+    await vi.waitFor(() => {
+      expect(h.owner.snapshot().proposal.changes).toHaveLength(1);
+    });
+    const id = h.owner.snapshot().id;
+    scriptedAgent(h, [{ tool: 'interpret', input: { intent: 'confirm', approval: 'Save it' } }]);
+    enter(surface, 'Save it');
+    await dispatched.promise;
+    if (phase === 'continuous listening') {
+      h.owner.setVoiceMode('continuous');
+      voiceButton(surface).click();
+    } else {
+      await startManualSpeech(surface, media);
+      if (phase === 'recognizing') {
+        voiceButton(surface).click();
+        await vi.waitFor(() => {
+          expect(transcribe).toHaveBeenCalledOnce();
+        });
+      }
+    }
+    release.resolve();
+    await vi.waitFor(() => {
+      expect(h.owner.commandPending()).toBe(false);
+    });
+    expect(h.owner.snapshot().id === id).toBe(phase !== 'continuous listening');
+    expect((await h.read('a.md')).match(/Parent/g)).toHaveLength(1);
+    if (phase === 'continuous listening') return;
+    if (phase === 'recording') voiceButton(surface).click();
+    recognition.resolve('Keep my next thought');
+    await vi.waitFor(() => {
+      expect(surface.input.value).toBe('Keep my next thought');
+    });
+    expect(h.owner.snapshot().journal).toHaveLength(1);
+  },
+);
 it('voice acquisition waits for an admitted write and captures the verified focus without replay', async () => {
   const admitted = deferred<void>(),
     release = deferred<void>();
