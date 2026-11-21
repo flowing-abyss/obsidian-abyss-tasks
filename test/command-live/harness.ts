@@ -47,6 +47,7 @@ import {
 } from './diagnostics';
 import {
   regradeRetainedTurn,
+  terminalSaveBeforeRollover,
   type ObservationEvidence,
   type ResearchEvidence,
   type RetainedTurn,
@@ -420,6 +421,7 @@ export interface CaseReport {
   failure?: string;
 }
 interface TurnReport extends TurnEvidence {
+  activeSnapshot?: CommandSessionSnapshot;
   text: string;
   inputSnapshot: CommandSessionSnapshot;
   snapshot: CommandSessionSnapshot;
@@ -695,7 +697,14 @@ async function createSessionRuntime(input: {
   ) =>
     new CommandSession({
       api,
-      agent: { run: (value) => agent.run(value) },
+      agent: {
+        run: async (value) => {
+          const outcome = await agent.run(value);
+          if (owner !== undefined && outcome === 'terminal-save')
+            trace('terminal-agent-save', value.session.id);
+          return outcome;
+        },
+      },
       journal: {
         save: async (state) => {
           await port.save(state);
@@ -992,6 +1001,16 @@ function appendTurnFailures(
   if (input.budget.interrupted) failures.push('request-budget');
   if (input.providerDiagnostics.unrecovered.length > 0) failures.push('provider-failure');
 }
+function turnSnapshots(
+  input: CommandSessionSnapshot,
+  active: CommandSessionSnapshot,
+  events: TraceEvent[],
+): Pick<TurnReport, 'snapshot' | 'activeSnapshot'> {
+  const completed = terminalSaveBeforeRollover(events, input.id, active.id);
+  return completed === undefined
+    ? { snapshot: active }
+    : { snapshot: completed, activeSnapshot: active };
+}
 async function runTurn(input: {
   turn: EvalTurn;
   h: EvalHost;
@@ -1010,7 +1029,12 @@ async function runTurn(input: {
   if (turn.external !== undefined) await h.external(turn.external.path, turn.external.content);
   const before = await readFiles(h);
   await perform(turn, h, state);
-  const snapshot = state.live.snapshot();
+  const snapshots = turnSnapshots(
+    inputSnapshot,
+    state.live.snapshot(),
+    report.trace.slice(traceStart),
+  );
+  const { snapshot } = snapshots;
   const { publicReadback, trees } = await input.lifetime.run(
     'readback',
     input.limits.readbackMs,
@@ -1116,7 +1140,12 @@ async function runTurn(input: {
       change.kind === 'note' ? [{ path: change.plan.path, text: change.plan.after.text }] : [],
     ),
   };
-  const retainedTurn = { ...evidence, inputSnapshot, snapshot, publicReadback } as RetainedTurn;
+  const retainedTurn = {
+    ...evidence,
+    inputSnapshot,
+    ...snapshots,
+    publicReadback,
+  } as RetainedTurn;
   const regraded = regradeRetainedTurn(turn.expect, retainedTurn, report.trace, {
     oneBasedTurn: report.activeTurn ?? 0,
     sourcePredicatePolicy,
@@ -1128,8 +1157,8 @@ async function runTurn(input: {
   const writeObservations = regraded.evidence?.writeObservations;
   const turnReport: TurnReport = {
     text: turn.text,
+    ...snapshots,
     inputSnapshot,
-    snapshot,
     publicReadback,
     ...reportEvidence,
     failures,

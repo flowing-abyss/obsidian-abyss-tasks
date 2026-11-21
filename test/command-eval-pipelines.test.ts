@@ -2295,6 +2295,60 @@ it('moves a canonical no-op proposal out of the active session without a write',
   expect(turn.journal).toEqual([]);
   expect(turn.before).toEqual(turn.after);
 });
+function expectRolloverEvidenceRequired(
+  expected: TurnExpectation,
+  turn: RetainedTurn,
+  trace: RetainedTraceEvent[],
+): void {
+  const missingActive = { ...turn };
+  delete missingActive.activeSnapshot;
+  expect(regradeRetainedTurn(expected, missingActive, trace, 3).failures).toContain(
+    'retained-turn-evidence',
+  );
+  const wrongActive = { ...turn, activeSnapshot: turn.inputSnapshot };
+  expect(regradeRetainedTurn(expected, wrongActive, trace, 3).failures).toContain(
+    'retained-turn-evidence',
+  );
+  const wrongMarker = trace.map((event) =>
+    event.kind === 'terminal-agent-save' ? { ...event, data: 'other-session' } : event,
+  );
+  expect(regradeRetainedTurn(expected, turn, wrongMarker, 3).failures).toContain(
+    'retained-turn-evidence',
+  );
+  for (const fault of [
+    'missing archive',
+    'foreign session',
+    'missing receipt',
+    'wrong active pointer',
+  ]) {
+    const damaged = structuredClone(trace);
+    const saveEnd = expectDefined(
+      damaged.find(
+        (event) =>
+          event.kind === 'case-phase' &&
+          object(event.data)['phase'] === 'evaluation' &&
+          object(event.data)['turn'] === 3,
+      ),
+    );
+    const store = object(
+      expectDefined(
+        damaged.find((event) => event.kind === 'owner-store' && event.sequence > saveEnd.sequence),
+      ).data,
+    );
+    const records = store['sessions'] as Array<{ snapshot: Record<string, unknown> }>;
+    const archive = expectDefined(
+      records.find((entry) => entry.snapshot['id'] === object(turn.inputSnapshot)['id']),
+    ).snapshot;
+    if (fault === 'missing archive') store['sessions'] = [];
+    if (fault === 'foreign session') archive['id'] = 'unrelated';
+    if (fault === 'missing receipt') delete object((archive['journal'] as unknown[])[0])['receipt'];
+    if (fault === 'wrong active pointer')
+      store['activeSessionId'] = object(turn.inputSnapshot)['id'];
+    expect(regradeRetainedTurn(expected, turn, damaged, 3).failures, fault).toContain(
+      'retained-turn-evidence',
+    );
+  }
+}
 it('qualifies an all-unchanged canonical task edit save with a current receipt and readback', async () => {
   const startMs = Date.parse('2026-09-17T09:12:00+03:00');
   const endMs = Date.parse('2026-09-17T10:40:51+03:00');
@@ -2440,7 +2494,12 @@ it('qualifies an all-unchanged canonical task edit save with a current receipt a
 
   const transition = expectDefined(report.turns[3]);
   expect(transition.failures).toEqual([]);
-  expect(transition.inputSnapshot.journal).toHaveLength(1);
+  const active = expectDefined(saved.activeSnapshot);
+  expect(active.id).not.toBe(saved.inputSnapshot.id);
+  expect(active.status.kind).toBe('ready');
+  expect(active.journal).toEqual([]);
+  expect(transition.inputSnapshot).toEqual(active);
+  expect(transition.inputSnapshot.journal).toEqual([]);
   expect(transition.snapshot.id).not.toBe(transition.inputSnapshot.id);
   expect(transition.snapshot.journal).toEqual([]);
   expect(transition.writeCount).toBe(0);
@@ -2502,6 +2561,7 @@ it('qualifies an all-unchanged canonical task edit save with a current receipt a
   expect(
     regradeRetainedTurn(transitionExpected, serializedTransition, report.trace, 4).failures,
   ).toEqual([]);
+  expectRolloverEvidenceRequired(expected, serializedTurn, serializedReport.trace);
   const missingEpoch: RetainedTurn = { ...serializedTurn };
   delete missingEpoch.hostProviderEpoch;
   expect(regradeRetainedTurn(expected, missingEpoch, serializedReport.trace, 3).failures).toContain(

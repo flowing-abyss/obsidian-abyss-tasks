@@ -1,4 +1,5 @@
 import type { TaskTreeV1 } from '../../api';
+import { projectCommandSnapshot } from '../../src/ai/commandRecovery';
 import type { CommandSessionSnapshot } from '../../src/ai/commandTypes';
 import { normalizeLinkCarrier, taskLinkFailures } from './linkOracle';
 import {
@@ -1744,6 +1745,7 @@ export function evaluateTurn(
 }
 
 export interface RetainedTurn extends TurnEvidence {
+  activeSnapshot?: unknown;
   inputSnapshot: unknown;
   snapshot: unknown;
   publicReadback: readonly unknown[];
@@ -1806,6 +1808,82 @@ function retainedSnapshot(value: unknown): Record<string, unknown> | undefined {
     Number.isSafeInteger(proposal['revision'])
     ? snapshot
     : undefined;
+}
+/** A terminal write belongs to the session that issued it, even after the owner opens the next session. */
+export function terminalSaveBeforeRollover(
+  events: readonly RetainedTraceEvent[],
+  inputId: string,
+  activeId: string,
+): CommandSessionSnapshot | undefined {
+  if (inputId === activeId) return undefined;
+  const marker = events.findIndex(
+    (event) => event.kind === 'terminal-agent-save' && event.data === inputId,
+  );
+  if (marker < 0) return undefined;
+  const before = [...events.slice(0, marker)].reverse().find((event) => event.kind === 'snapshot');
+  const after = events.slice(marker + 1).find((event) => event.kind === 'snapshot');
+  if (record(before?.data)['id'] !== inputId || record(after?.data)['id'] !== activeId)
+    return undefined;
+  const saved = retainedSnapshot(before?.data);
+  if (record(saved?.['status'])['kind'] !== 'saved') return undefined;
+  return saved as unknown as CommandSessionSnapshot;
+}
+function archivedSaveMatches(storeValue: unknown, saved: CommandSessionSnapshot): boolean {
+  const store = record(storeValue);
+  if (store['activeSessionId'] !== null || !Array.isArray(store['sessions'])) return false;
+  const archives = (store['sessions'] as unknown[])
+    .map((item) => record(item)['snapshot'])
+    .filter((snapshot) => record(snapshot)['id'] === saved.id);
+  if (archives.length !== 1) return false;
+  try {
+    // Compare the on-disk projection, which omits runtime-only fields from task plans.
+    const expected: unknown = JSON.parse(
+      JSON.stringify(projectCommandSnapshot({ ...saved, pendingTransition: null })),
+    );
+    return equal(archives[0], expected);
+  } catch {
+    return false;
+  }
+}
+function freshRolloverSession(active: Record<string, unknown>): boolean {
+  return (
+    record(active['status'])['kind'] === 'ready' &&
+    active['input'] === '' &&
+    active['blocked'] === false &&
+    equal(active['exchanges'], []) &&
+    equal(active['focus'], []) &&
+    equal(active['journal'], []) &&
+    equal(record(active['proposal'])['changes'], [])
+  );
+}
+function verifiedRolloverJournal(journal: TurnEvidence['journal']): boolean {
+  return (
+    journal.length > 0 &&
+    journal.every(
+      (entry) =>
+        entry.state === 'settled' &&
+        (entry.effects === 'committed' || entry.effects === 'unchanged') &&
+        entry.receipt !== undefined,
+    )
+  );
+}
+function validRollover(turn: RetainedTurn, parts: RetainedTurnParts): boolean {
+  const last = [...parts.events].reverse().find((event) => event.kind === 'snapshot');
+  if (turn.activeSnapshot === undefined)
+    return last === undefined || record(last.data)['id'] === parts.after['id'];
+  const active = retainedSnapshot(turn.activeSnapshot);
+  if (active === undefined || !equal(last?.data, active)) return false;
+  const saved = terminalSaveBeforeRollover(
+    parts.events,
+    String(parts.before['id']),
+    String(active['id']),
+  );
+  if (saved === undefined || !equal(saved, parts.after)) return false;
+  return (
+    freshRolloverSession(active) &&
+    verifiedRolloverJournal(parts.currentJournal) &&
+    archivedSaveMatches(parts.ownerStore, saved)
+  );
 }
 function retainedTerminalOwnerStore(
   trace: readonly RetainedTraceEvent[],
@@ -2161,7 +2239,8 @@ export function regradeRetainedTurn(
 ): { failures: string[]; evidence?: TurnEvidence } {
   const options = typeof turnOptions === 'number' ? { oneBasedTurn: turnOptions } : turnOptions;
   const parts = retainedTurnParts(turn, trace, options.oneBasedTurn);
-  if (parts === undefined) return { failures: ['retained-turn-evidence'] };
+  if (parts === undefined || !validRollover(turn, parts))
+    return { failures: ['retained-turn-evidence'] };
   const evidence = retainedTurnEvidenceFromParts(expected, turn, parts);
   const beforeSnapshot = parts.before as unknown as CommandSessionSnapshot;
   const built = retainedPreservationBuild({ expected, turn, trace, options, parts });
