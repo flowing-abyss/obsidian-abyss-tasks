@@ -5759,15 +5759,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border-color: var(--interactive-accent);
 }
 
-.abyss-comment-edit-input {
+.abyss-comment-row .abyss-comment-edit-input {
   width: 100%;
   border: none;
   border-radius: 0;
   padding: 0;
-  background: var(--background-secondary);
+  background: transparent;
+  box-shadow: none;
   color: var(--text-normal);
-  font-size: 13px;
-  font-family: var(--font-text, var(--font-text-theme));
+  font-size: inherit;
+  font-family: inherit;
   resize: vertical;
   min-height: 0;
   outline: none;
