@@ -6,19 +6,23 @@ import type { ParseContext, Task } from './types';
 const DURATION_RE = /⏱️\s*(?:(\d{1,2}):([0-5]\d)(?=\s|$)|(?:(\d+)h)?(?:(\d+)m)?)/u;
 
 /** Parse a duration token body (e.g. "1h30m", "2h", "45m", or legacy "01:30"). */
-export function parseDurationToMinutes(raw: string): number | undefined {
+export function parseDurationInputMinutes(raw: string): number | undefined {
   const value = raw.trim();
   const clock = /^(\d{1,2}):([0-5]\d)$/u.exec(value);
   if (clock != null) {
-    const total = Number(clock[1]) * 60 + Number(clock[2]);
-    return total > 0 ? total : undefined;
+    return Number(clock[1]) * 60 + Number(clock[2]);
   }
   const m = /^(?:(\d+)h)?(?:(\d+)m)?$/u.exec(value);
   if (m == null) return undefined;
   const hours = m[1] !== undefined ? parseInt(m[1], 10) : 0;
   const mins = m[2] !== undefined ? parseInt(m[2], 10) : 0;
-  const total = hours * 60 + mins;
-  return total > 0 ? total : undefined;
+  return hours * 60 + mins;
+}
+
+/** Task metadata represents a zero duration by omitting the field. */
+export function parseDurationToMinutes(raw: string): number | undefined {
+  const minutes = parseDurationInputMinutes(raw);
+  return minutes !== undefined && minutes > 0 ? minutes : undefined;
 }
 
 /** Format total minutes into the shortest "XhYm" form (e.g. 90 -> "1h30m", 120 -> "2h", 45 -> "45m"). */

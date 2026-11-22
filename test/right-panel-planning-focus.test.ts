@@ -1,5 +1,5 @@
-import { addIcon, removeIcon } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { addIcon, Platform, removeIcon } from 'obsidian';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskCommandResult } from '../src/tasks';
 import {
   deferred,
@@ -15,6 +15,7 @@ import {
   subscribeInspectorReconciliation,
   type InspectorHarness,
 } from './support/inspectorHarness';
+import { captureMenus, rightClick } from './support/linkEditHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
@@ -144,6 +145,255 @@ function holdNextWrite(h: InspectorHarness, { outcome, dropSaveFocus }: HeldWrit
     },
   };
 }
+
+describe('iOS inspector pickers', () => {
+  const initialPlatform = Platform.isIosApp;
+  const pickerDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'showPicker',
+  );
+  const showPicker = vi.fn();
+  beforeEach(() => {
+    Platform.isIosApp = true;
+    Object.defineProperty(HTMLInputElement.prototype, 'showPicker', {
+      configurable: true,
+      value: showPicker,
+    });
+  });
+  afterEach(() => {
+    Platform.isIosApp = initialPlatform;
+    if (pickerDescriptor === undefined)
+      Reflect.deleteProperty(HTMLInputElement.prototype, 'showPicker');
+    else Object.defineProperty(HTMLInputElement.prototype, 'showPicker', pickerDescriptor);
+  });
+
+  it.each([
+    { field: 'date', first: '2026-11-22', last: '2026-11-25', saved: '📅 2026-11-25' },
+    { field: 'time', first: '17:33', last: '09:26', saved: '⏰ 09:26' },
+  ] as const)(
+    'keeps native $field changes local across blur and a refresh until Apply',
+    async ({ field, first, last, saved }) => {
+      const source = '- [ ] Current\n- [ ] Other\n';
+      const h = await hosted(source);
+      const writes = vi.spyOn(h.api, 'execute');
+      activate(field === 'date' ? dateChip(h) : control(h, '.abyss-chip-time'));
+      const input = control<HTMLInputElement>(h, `.abyss-${field}-input`);
+      await flushMicrotasks();
+      expect(activeDocument.activeElement).not.toBe(input);
+      expect(showPicker).not.toHaveBeenCalled();
+
+      input.focus();
+      change(input, first);
+      input.blur();
+      await flushMicrotasks(220);
+      await refreshSelectedPresentation(h, source);
+      expect(await h.read()).toBe(source);
+      expect(input.isConnected).toBe(true);
+
+      change(input, last);
+      const apply = control(h, `[aria-label^="Apply ${field}"]`);
+      apply.click();
+      apply.click();
+      await flushMicrotasks();
+      expect(await h.read()).toBe(`- [ ] Current ${saved}\n- [ ] Other\n`);
+      expect(writes).toHaveBeenCalledTimes(1);
+      expect(input.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(
+        field === 'date' ? dateChip(h) : control(h, '.abyss-chip-time'),
+      );
+    },
+  );
+
+  it('applies a time and duration together after the duration field loses focus', async () => {
+    const source = '- [ ] Current ⏰ 08:30 ⏱️ 30m\n';
+    const h = await hosted(source);
+    const writes = vi.spyOn(h.api, 'execute');
+    activate(control(h, '.abyss-chip-time'));
+    change(control<HTMLInputElement>(h, '.abyss-time-input'), '14:30');
+    const duration = control<HTMLInputElement>(h, '.abyss-duration-input');
+    duration.focus();
+    change(duration, '90m');
+    duration.blur();
+    await flushMicrotasks();
+    expect(await h.read()).toBe(source);
+    expect(writes).not.toHaveBeenCalled();
+    control(h, '[aria-label^="Apply time"]').click();
+    await flushMicrotasks();
+    expect(await h.read()).toBe('- [ ] Current ⏰ 14:30 ⏱️ 1h30m\n');
+    expect(writes).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['0m', '0h', '00:00'])(
+    'applies the new time and clears a duration entered as %s',
+    async (zero) => {
+      const h = await hosted('- [ ] Current ⏰ 08:30 ⏱️ 30m\n');
+      activate(control(h, '.abyss-chip-time'));
+      change(control<HTMLInputElement>(h, '.abyss-time-input'), '14:30');
+      change(control<HTMLInputElement>(h, '.abyss-duration-input'), zero);
+      activate(control(h, '[aria-label="Apply time and duration"]'));
+      await flushMicrotasks();
+      expect(await h.read()).toBe('- [ ] Current ⏰ 14:30\n');
+    },
+  );
+
+  it.each(['time', 'duration'] as const)(
+    'honors Clear %s after a pending write fills a previously empty field',
+    async (field) => {
+      const h = await hosted('- [ ] Current\n');
+      const held = holdNextWrite(h);
+      activate(control(h, '.abyss-chip-time'));
+      change(control<HTMLInputElement>(h, '.abyss-time-input'), '14:30');
+      change(control<HTMLInputElement>(h, '.abyss-duration-input'), '30m');
+      activate(control(h, '[aria-label="Apply time and duration"]'));
+      activate(control(h, '.abyss-chip-time'));
+      held.release();
+      await flushMicrotasks();
+      expect(await h.read()).toBe('- [ ] Current ⏰ 14:30 ⏱️ 30m\n');
+      activate(control(h, `[aria-label="Clear ${field}"]`));
+      await flushMicrotasks();
+      expect(await h.read()).toBe(
+        field === 'time' ? '- [ ] Current ⏱️ 30m\n' : '- [ ] Current ⏰ 14:30\n',
+      );
+    },
+  );
+
+  it('keeps the time draft when clearing duration and rejects a mistyped duration', async () => {
+    const source = '- [ ] Current ⏰ 08:30 ⏱️ 30m\n';
+    const h = await hosted(source);
+    activate(control(h, '.abyss-chip-time'));
+    change(control<HTMLInputElement>(h, '.abyss-time-input'), '14:30');
+    const duration = control<HTMLInputElement>(h, '.abyss-duration-input');
+    change(duration, 'wrong');
+    activate(control(h, '[aria-label="Apply time and duration"]'));
+    expect(duration.validity.customError).toBe(true);
+    activate(control(h, '[aria-label="Clear duration"]'));
+    expect(duration.value).toBe('');
+    expect(duration.isConnected).toBe(true);
+    expect(await h.read()).toBe(source);
+    activate(control(h, '[aria-label="Apply time and duration"]'));
+    await flushMicrotasks();
+    expect(await h.read()).toBe('- [ ] Current ⏰ 14:30\n');
+  });
+
+  it('retains a time draft across a preceding date write and a later metadata refresh', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-11-24\n');
+    const held = holdNextWrite(h);
+    activate(dateChip(h));
+    change(control<HTMLInputElement>(h, '.abyss-date-input'), '2026-11-27');
+    activate(control(h, '[aria-label="Apply date"]'));
+    activate(control(h, '.abyss-chip-time'));
+    const time = control<HTMLInputElement>(h, '.abyss-time-input');
+    time.focus();
+    change(time, '14:30');
+    held.release();
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(time);
+    await refreshSelectedPresentation(h, await h.read());
+    expect(time.isConnected).toBe(true);
+    activate(control(h, '[aria-label^="Apply time"]'));
+    await flushMicrotasks();
+    expect(await h.read()).toContain('⏰ 14:30');
+  });
+
+  it('clears the date shown on opening even when a pending save removes that date', async () => {
+    const h = await hosted('- [ ] Current ⏳ 2026-11-22 📅 2026-11-24\n');
+    const held = holdNextWrite(h);
+    activate(dateChip(h));
+    activate(control(h, '[aria-label="Clear date"]'));
+    activate(dateChip(h));
+    expect(control<HTMLInputElement>(h, '.abyss-date-input').value).toBe('2026-11-24');
+    held.release();
+    await flushMicrotasks();
+    activate(control(h, '[aria-label="Clear date"]'));
+    await flushMicrotasks();
+    expect(await h.read()).toBe('- [ ] Current ⏳ 2026-11-22\n');
+  });
+
+  it('applies a child row’s suggested date to its due field after its parent refreshes', async () => {
+    const source = '- [ ] Current\n  - [ ] Child ⏳ 2026-11-22\n';
+    const h = await hosted(source);
+    const shown = captureMenus();
+    rightClick(control(h, '.abyss-subtask-row'));
+    expectDefined(shown[0]).pick('Set date…');
+    const input = control<HTMLInputElement>(h, '.abyss-date-input');
+    expect(input.value).toBe('2026-11-22');
+    await refreshSelectedPresentation(h, source);
+    expect(input.isConnected).toBe(true);
+    activate(control(h, '[aria-label="Apply date"]'));
+    await flushMicrotasks();
+    expect(h.node('Child').node.planning.due).toBe('2026-11-22');
+    expect(h.node('Child').node.planning.scheduled).toBe('2026-11-22');
+    expect(h.node('Current').node.planning.due).toBeUndefined();
+  });
+
+  it('drops a time draft when focus moves to another control', async () => {
+    const source = '- [ ] Current ⏰ 06:00\n';
+    const h = await hosted(source);
+    activate(control(h, '.abyss-chip-time'));
+    const input = control<HTMLInputElement>(h, '.abyss-time-input');
+    const apply = control(h, '[aria-label^="Apply time"]');
+    input.focus();
+    change(input, '09:26');
+    const outside = h.el.ownerDocument.body.createEl('button');
+    outside.focus();
+    await flushMicrotasks(220);
+    expect(input.isConnected).toBe(false);
+    apply.click();
+    expect(await h.read()).toBe(source);
+  });
+
+  it.each(['date', 'time'] as const)(
+    'discards a dismissed %s draft and supports native reset and direct clear',
+    async (field) => {
+      const source = '- [ ] Current 📅 2026-11-25 ⏰ 09:26\n';
+      const cleared =
+        field === 'date' ? '- [ ] Current ⏰ 09:26\n' : '- [ ] Current 📅 2026-11-25\n';
+      for (const directClear of [false, true]) {
+        const h = await hosted(source);
+        const open = () => {
+          activate(field === 'date' ? dateChip(h) : control(h, '.abyss-chip-time'));
+        };
+        open();
+        const input = control<HTMLInputElement>(h, `.abyss-${field}-input`);
+        change(input, '');
+        key(input, 'Escape');
+        await flushMicrotasks();
+        expect(await h.read()).toBe(source);
+        expect(input.isConnected).toBe(false);
+        open();
+        if (directClear) activate(control(h, `[aria-label="Clear ${field}"]`));
+        else {
+          change(control<HTMLInputElement>(h, `.abyss-${field}-input`), '');
+          activate(control(h, `[aria-label^="Apply ${field}"]`));
+        }
+        await flushMicrotasks();
+        expect(await h.read()).toBe(cleared);
+      }
+    },
+  );
+});
+
+it('commits a native choice immediately on Android', async () => {
+  const previous = {
+    isMobile: Platform.isMobile,
+    isAndroidApp: Platform.isAndroidApp,
+    isIosApp: Platform.isIosApp,
+  };
+  Object.assign(Platform, { isMobile: true, isAndroidApp: true, isIosApp: false });
+  try {
+    const h = await hosted('- [ ] Current\n');
+    activate(dateChip(h));
+    change(control<HTMLInputElement>(h, '.abyss-date-input'), '2026-11-25');
+    await flushMicrotasks();
+    activate(control(h, '.abyss-chip-time'));
+    change(control<HTMLInputElement>(h, '.abyss-time-input'), '14:30');
+    await flushMicrotasks();
+    expect(h.node('Current').node.planning).toMatchObject({ due: '2026-11-25', time: '14:30' });
+    expect(h.el.querySelector('.abyss-time-popover')).toBeNull();
+  } finally {
+    Object.assign(Platform, previous);
+  }
+});
 
 describe('inspector planning focus continuity', () => {
   it.each([

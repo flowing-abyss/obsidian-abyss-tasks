@@ -1,6 +1,10 @@
 import type { App } from 'obsidian';
-import { setIcon, setTooltip, type Component } from 'obsidian';
-import { formatDurationFromMinutes, parseDurationToMinutes } from '../../parser/TaskParser';
+import { Platform, setIcon, setTooltip, type Component } from 'obsidian';
+import {
+  formatDurationFromMinutes,
+  parseDurationInputMinutes,
+  parseDurationToMinutes,
+} from '../../parser/TaskParser';
 import { DEFAULT_SETTINGS } from '../../settings/defaults';
 import type { CalendarSettings } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
@@ -8,7 +12,9 @@ import { colorForTag } from '../../tags/tagColor';
 import { collectTaskTags } from '../../tags/taskTagCatalog';
 import type { TaskQueryApi } from '../../tasks';
 import {
+  durationMinutes,
   localDate,
+  localTime,
   recurrenceLabel,
   sameTaskNodeRef,
   subtreeRunning,
@@ -65,6 +71,44 @@ import type {
   TaskLike,
 } from './inspectorTypes';
 const DURATION_INPUT_EXAMPLE = '1h30m';
+
+interface PlanningPickerElements {
+  readonly pop: HTMLElement;
+  readonly anchor: HTMLElement;
+  readonly inputRow: HTMLElement;
+  readonly input: HTMLInputElement;
+}
+
+type SubmitPickerEdit = (write: (task: TaskLike) => void) => void;
+
+function renderPickerApply(container: HTMLElement, label: string, apply: () => void): void {
+  container
+    .createEl('button', {
+      text: 'Apply',
+      attr: { type: 'button', 'aria-label': label },
+    })
+    .addEventListener('click', apply);
+}
+
+function pickerFieldEdited(input: HTMLInputElement, clearRequested: boolean): boolean {
+  return input.value !== input.defaultValue || (clearRequested && input.value === '');
+}
+
+function iosDurationPatch(
+  input: HTMLInputElement | undefined,
+  clearRequested: boolean,
+): TaskPatch | undefined {
+  if (input === undefined || !pickerFieldEdited(input, clearRequested)) return {};
+  const minutes = parseDurationInputMinutes(input.value);
+  if (minutes === undefined || !Number.isSafeInteger(minutes)) {
+    input.setCustomValidity(`Enter a duration such as ${DURATION_INPUT_EXAMPLE}.`);
+    input.reportValidity();
+    return undefined;
+  }
+  return {
+    duration: minutes === 0 ? { type: 'clear' } : { type: 'set', value: durationMinutes(minutes) },
+  };
+}
 
 interface InspectorPlanningHost {
   readonly aiContext?: TaskContextAction | undefined;
@@ -290,8 +334,9 @@ export class InspectorPlanningSurfaces {
     | {
         readonly surface: HTMLElement;
         readonly input: HTMLInputElement;
-        readonly target: TaskNodeRef;
+        target: TaskNodeRef;
         readonly opener: HTMLElement;
+        readonly pickerOwner?: InspectorTaskOwner;
         openingFocusPending: boolean;
         submitted: boolean;
       }
@@ -304,7 +349,8 @@ export class InspectorPlanningSurfaces {
       !entry.submitted &&
       entry.surface.isConnected &&
       entry.input.isConnected &&
-      (entry.input.ownerDocument.activeElement === entry.input ||
+      (entry.pickerOwner !== undefined ||
+        entry.input.ownerDocument.activeElement === entry.input ||
         (entry.openingFocusPending && this.#canFocusOpeningInput(entry.input, entry.opener))) &&
       sameTaskNodeRef(entry.target, target)
     );
@@ -438,17 +484,22 @@ export class InspectorPlanningSurfaces {
     return key === undefined ? undefined : planningReturnKeys(key, this.#addDateField);
   }
 
+  #hasRetainedFocus(retainedFocus?: Element | null): boolean {
+    const focused = this.#host.root().ownerDocument.activeElement;
+    const entry = this.#typedInput;
+    return (
+      (entry?.pickerOwner !== undefined && entry.surface.contains(focused)) ||
+      (retainedFocus?.isConnected === true && focused === retainedFocus)
+    );
+  }
+
   /** Refocuses the status marker that held focus, or else the first rebuilt control still usable. */
   restoreRenderFocus(
     statusFocus: TaskNodeRef | undefined,
     controls: readonly PlanningControlKey[] | undefined,
     retainedFocus?: Element | null,
   ): void {
-    if (
-      retainedFocus?.isConnected === true &&
-      this.#host.root().ownerDocument.activeElement === retainedFocus
-    )
-      return;
+    if (this.#hasRetainedFocus(retainedFocus)) return;
     if (statusFocus !== undefined) {
       this.#restoreStatusFocus(statusFocus);
       return;
@@ -935,8 +986,6 @@ export class InspectorPlanningSurfaces {
    * behavior are identical for all three; only the read/write pair differs.
    */
   #showDatePopover(anchor: HTMLElement, task: TaskLike, field: SchedulingDateField = 'due'): void {
-    let currentTask = task;
-    const owner = this.#host.taskOwner(task);
     const already = this.#host.root().querySelector('.abyss-date-popover');
     this.clearPopovers();
     if (already != null) return;
@@ -953,6 +1002,50 @@ export class InspectorPlanningSurfaces {
       cls: 'abyss-date-input',
       attr: { type: 'date', value: datePopoverValue(task, field) ?? '' },
     });
+    if (Platform.isIosApp) {
+      const clearField =
+        field === 'due' && task.planning.due == null && task.planning.scheduled != null
+          ? 'scheduled'
+          : field;
+      this.#bindIosPicker(
+        { pop, anchor, inputRow, input },
+        task,
+        (submit) => {
+          const clear = (): void => {
+            submit((current) => {
+              runAsyncAction(
+                this.#commands.executePlanningPatch(current, { [clearField]: { type: 'clear' } }),
+              );
+            });
+          };
+          this.#renderPopoverClear(inputRow, 'Clear date', clear);
+          renderPickerApply(inputRow, 'Apply date', () => {
+            if (input.validity.badInput) return;
+            const value = input.value;
+            if (value === '') clear();
+            else if (isUsableDateInputValue(value))
+              submit((current) => {
+                this.#commitDateChoice(current, field, value);
+              });
+          });
+        },
+        () => {
+          restorePopupRole(anchor, previousPopupRole);
+        },
+      );
+      return;
+    }
+    this.#bindSegmentedDatePicker({ pop, anchor, inputRow, input }, task, field, previousPopupRole);
+  }
+
+  #bindSegmentedDatePicker(
+    { pop, anchor, inputRow, input }: PlanningPickerElements,
+    task: TaskLike,
+    field: SchedulingDateField,
+    previousPopupRole: string | null,
+  ): void {
+    let currentTask = task;
+    const owner = this.#host.taskOwner(task);
     const ownerWindow = input.ownerDocument.defaultView;
     const entry = {
       surface: pop,
@@ -1329,6 +1422,14 @@ export class InspectorPlanningSurfaces {
       cls: 'abyss-time-input',
       attr: { type: 'time', value: task.planning.time ?? '' },
     });
+    if (Platform.isIosApp) {
+      const picker = { pop, anchor, inputRow, input };
+      this.#bindIosPicker(picker, task, (submit) => {
+        this.#renderIosTimeActions(picker, task, submit);
+      });
+      return;
+    }
+    const disarmDuration = 'source' in task ? this.#renderDurationInputs(pop, task) : undefined;
     this.#host.root().ownerDocument.defaultView?.setTimeout(() => {
       input.focus();
     }, 0);
@@ -1349,8 +1450,6 @@ export class InspectorPlanningSurfaces {
       this.#finishPopoverUpdate(pop, this.#commands.updateTime(currentTask, ''));
     });
 
-    const disarmDuration = 'source' in task ? this.#renderDurationInputs(pop, task) : undefined;
-
     this.positionAnchoredSurface(pop, anchor, 'below-start');
     this.#dismissMenuOnOutsideClick(pop, anchor, undefined, {
       focusLeaveDelay: 200,
@@ -1364,7 +1463,111 @@ export class InspectorPlanningSurfaces {
     });
   }
 
-  #renderDurationInputs(popover: HTMLElement, task: TaskSnapshot): () => void {
+  // WebKit can fill an empty input on opening and change it after each wheel movement.
+  // The native input holds the draft until Apply. Focus may leave the document for the picker.
+  #bindIosPicker(
+    { pop, anchor, input }: PlanningPickerElements,
+    task: TaskLike,
+    renderActions: (submit: SubmitPickerEdit) => void,
+    onCleanup?: () => void,
+  ): void {
+    // A subtask row menu can edit a child while the inspector still displays its parent.
+    const stack = this.#host.stack();
+    const inspected = this.#host.taskOwner(stack[stack.length - 1] ?? task);
+    const edited = this.#host.taskOwner(task);
+    const entry = {
+      surface: pop,
+      opener: anchor,
+      input,
+      target: taskNodeRef(inspected.current ?? task),
+      pickerOwner: inspected,
+      openingFocusPending: false,
+      submitted: false,
+    };
+    this.#typedInput = entry;
+    input.setAttribute('aria-label', input.type === 'time' ? 'Set time' : 'Set date');
+    renderActions((write) => {
+      if (this.#typedInput !== entry || entry.submitted || !pop.isConnected) return;
+      entry.submitted = true;
+      if (this.focusIsNeutral() && anchor.isConnected) anchor.focus({ preventScroll: true });
+      if (edited.current !== undefined) write(edited.current);
+      this.#removeAnchoredSurface(pop);
+    });
+    const doc = pop.ownerDocument;
+    const onFocusIn = (event: FocusEvent): void => {
+      const target = event.target as Node;
+      if (
+        target !== doc.body &&
+        target !== doc.documentElement &&
+        target !== anchor &&
+        !pop.contains(target)
+      )
+        this.#removeAnchoredSurface(pop);
+    };
+    doc.addEventListener('focusin', onFocusIn);
+    this.positionAnchoredSurface(pop, anchor, 'below-start');
+    this.#dismissMenuOnOutsideClick(pop, anchor, undefined, {
+      onCleanup: () => {
+        doc.removeEventListener('focusin', onFocusIn);
+        this.#releaseTypedInput(pop);
+        onCleanup?.();
+      },
+    });
+    pop.tabIndex = -1;
+    pop.focus({ preventScroll: true });
+  }
+
+  #renderIosTimeActions(
+    { pop, inputRow, input }: PlanningPickerElements,
+    task: TaskLike,
+    submit: SubmitPickerEdit,
+  ): void {
+    const duration = 'source' in task ? this.#createDurationInput(pop, task) : undefined;
+    let clearTime = false;
+    let clearDuration = false;
+    const apply = (): void => {
+      const time = input.value;
+      if (!input.validity.valid || (time !== '' && time.length !== 5)) return;
+      const durationPatch = iosDurationPatch(duration?.input, clearDuration);
+      if (durationPatch === undefined) return;
+      const patch: TaskPatch = pickerFieldEdited(input, clearTime)
+        ? {
+            ...durationPatch,
+            time: time === '' ? { type: 'clear' } : { type: 'set', value: localTime(time) },
+          }
+        : durationPatch;
+      submit((current) => {
+        if (patch.time !== undefined || patch.duration !== undefined)
+          runAsyncAction(this.#commands.executePlanningPatch(current, patch));
+      });
+    };
+    this.#renderPopoverClear(inputRow, 'Clear time', () => {
+      clearTime = true;
+      input.value = '';
+      if (duration?.input.value === duration?.input.defaultValue) apply();
+    });
+    if (duration !== undefined) {
+      duration.input.addEventListener('input', () => {
+        duration.input.setCustomValidity('');
+      });
+      this.#renderPopoverClear(duration.row, 'Clear duration', () => {
+        clearDuration = true;
+        duration.input.value = '';
+        duration.input.setCustomValidity('');
+        if (input.value === input.defaultValue) apply();
+      });
+    }
+    renderPickerApply(
+      duration === undefined ? inputRow : pop,
+      duration === undefined ? 'Apply time' : 'Apply time and duration',
+      apply,
+    );
+  }
+
+  #createDurationInput(
+    popover: HTMLElement,
+    task: TaskSnapshot,
+  ): { row: HTMLElement; input: HTMLInputElement } {
     const row = popover.createDiv({ cls: 'abyss-popover-input-row' });
     const input = row.createEl('input', {
       cls: 'abyss-duration-input',
@@ -1376,6 +1579,11 @@ export class InspectorPlanningSurfaces {
           task.planning.duration == null ? '' : formatDurationFromMinutes(task.planning.duration),
       },
     });
+    return { row, input };
+  }
+
+  #renderDurationInputs(popover: HTMLElement, task: TaskSnapshot): () => void {
+    const { row, input } = this.#createDurationInput(popover, task);
     let armed = true;
     input.addEventListener('change', () => {
       // Chromium fires change for an edited field it removes; a closed popover writes nothing.
@@ -1704,7 +1912,15 @@ export class InspectorPlanningSurfaces {
   registerStatusMarker(marker: HTMLElement, task: TaskLike): void {
     this.#dependencyStatusMarkers.set(marker, this.#host.taskOwner(task));
   }
+  #refreshPickerTarget(): void {
+    // Metadata rendering checks the previous revision first. Adopt the new revision once that render finishes.
+    const entry = this.#typedInput;
+    if (entry?.pickerOwner?.current !== undefined)
+      entry.target = taskNodeRef(entry.pickerOwner.current);
+  }
+
   updateTaskOwners(proof?: OwnedTaskSelectionProof): void {
+    this.#refreshPickerTarget();
     if (proof?.reordersSubtasks === true)
       for (const { onReorder } of this.#surfaceOpeners.values()) onReorder?.(proof);
     for (const [marker, owner] of this.#dependencyStatusMarkers) {
