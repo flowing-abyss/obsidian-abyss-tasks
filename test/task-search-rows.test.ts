@@ -233,6 +233,41 @@ it('shares one detached root across occurrences, bounds more than 50 demanded ro
   });
   h.dispose();
 });
+it('reads a shared ancestor once when selecting a batch and rechecks it after hydration', async () => {
+  const dependencies = deferred<void>();
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const h = await rowsHarness(4, { prepareDependencies: () => dependencies.promise });
+  const read = h.index.resolveSearchHits.bind(h.index);
+  const hydration = vi
+    .spyOn(h.index, 'resolveSearchHits')
+    .mockImplementationOnce(async (hits, signal) => {
+      entered.resolve();
+      await release.promise;
+      return read(hits, signal);
+    });
+  const mounts = [...h.rows.slice(0, h.rows.rowCount)].map((row) => h.owner.mount(h.host, row));
+  const styles = vi.spyOn(window, 'getComputedStyle');
+  try {
+    dependencies.resolve();
+    await entered.promise;
+    expect(hydration.mock.calls[0]?.[0]).toHaveLength(4);
+    expect(styles.mock.calls.filter(([element]) => element === h.host)).toHaveLength(1);
+    h.host.hide();
+    release.resolve();
+    await flushMicrotasks();
+    expect(h.mounted).toHaveLength(0);
+    h.host.show();
+    h.owner.mountedChanged(taskKeys(h.rows));
+    expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
+    expect(h.mounted).toHaveLength(4);
+    expect(hydration).toHaveBeenCalledTimes(2);
+  } finally {
+    release.resolve();
+    for (const mount of mounts) mount.destroy();
+    h.dispose();
+  }
+});
 it('skips queued evicted roots and cancels a never-mounted row wait on dispose', async () => {
   const h = await rowsHarness(2);
   const hydrate = vi.spyOn(h.index, 'resolveSearchHits');

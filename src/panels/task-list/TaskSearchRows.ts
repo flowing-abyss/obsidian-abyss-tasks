@@ -65,6 +65,20 @@ interface MountedRow {
   readyReceipt?: Promise<TaskRenderOutcome>;
   failure?: { readonly type: 'failed'; readonly error: unknown };
 }
+function styleAllowsRow(
+  owner: Window,
+  element: HTMLElement,
+  cache?: Map<HTMLElement, boolean>,
+): boolean {
+  const known = cache?.get(element);
+  if (known !== undefined) return known;
+  const style = owner.getComputedStyle(element);
+  const visible =
+    style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse';
+  cache?.set(element, visible);
+  return visible;
+}
+
 function rootKey(address: TaskSearchAddress): string {
   return JSON.stringify([address.epoch, address.version, address.rootId]);
 }
@@ -390,7 +404,7 @@ export class TaskSearchRows {
     if (signal.aborted) throw new TaskSearchError('aborted', 'Search row cancelled');
     if (!this.#current(identity)) throw new TaskSearchError('stale', 'Search rows replaced');
   }
-  #eligible(row: MountedRow): boolean {
+  #eligible(row: MountedRow, styles?: Map<HTMLElement, boolean>): boolean {
     const element = row.element;
     if (
       !element.isConnected ||
@@ -401,9 +415,7 @@ export class TaskSearchRows {
     )
       return false;
     for (let node: HTMLElement | null = element; node !== null; node = node.parentElement) {
-      const style = row.window.getComputedStyle(node);
-      if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility))
-        return false;
+      if (!styleAllowsRow(row.window, node, styles)) return false;
     }
     return true;
   }
@@ -466,12 +478,12 @@ export class TaskSearchRows {
         });
     });
   }
-  #demanded(root: RootLease): boolean {
+  #demanded(root: RootLease, styles?: Map<HTMLElement, boolean>): boolean {
     let rowUsers = 0;
     for (const row of this.#mounted.values()) {
       if (row.root !== root || !row.leased) continue;
       rowUsers++;
-      if (this.#eligible(row)) return true;
+      if (this.#eligible(row, styles)) return true;
     }
     return root.users > rowUsers;
   }
@@ -520,19 +532,32 @@ export class TaskSearchRows {
     }
   }
 
+  #pendingRoots(limit: number): RootLease[] {
+    const roots: RootLease[] = [];
+    // One synchronous read. The next pass starts after a yield or a renderer callback.
+    const styles = new Map<HTMLElement, boolean>();
+    for (const root of this.#roots.values()) {
+      if (root.task !== undefined || root.failure !== undefined || !this.#demanded(root, styles))
+        continue;
+      roots.push(root);
+      if (roots.length === limit) break;
+    }
+    return roots;
+  }
+
   #hasWork(): boolean {
-    return (
-      [...this.#roots.values()].some(
-        (root) => root.task === undefined && root.failure === undefined && this.#demanded(root),
-      ) ||
-      [...this.#mounted.values()].some(
-        (row) =>
-          row.dirty &&
-          row.failure === undefined &&
-          row.root.failure === undefined &&
-          this.#eligible(row),
+    if (this.#pendingRoots(1).length > 0) return true;
+    const styles = new Map<HTMLElement, boolean>();
+    for (const row of this.#mounted.values()) {
+      if (
+        row.dirty &&
+        row.failure === undefined &&
+        row.root.failure === undefined &&
+        this.#eligible(row, styles)
       )
-    );
+        return true;
+    }
+    return false;
   }
   #pump(): void {
     if (this.#pumping || !this.#current() || !this.#hasWork()) return;
@@ -580,15 +605,7 @@ export class TaskSearchRows {
     await this.#dependencies;
     this.#check(identity, signal);
     for (;;) {
-      const batch = [...this.#roots.values()]
-        .filter(
-          (root) =>
-            root.users > 0 &&
-            root.task === undefined &&
-            root.failure === undefined &&
-            this.#demanded(root),
-        )
-        .slice(0, 50);
+      const batch = this.#pendingRoots(50);
       if (batch.length === 0) break;
       const hits = await this.#hydrateBatch(batch, signal);
       if (hits === undefined) {
@@ -599,20 +616,17 @@ export class TaskSearchRows {
       this.#acceptBatch(batch, hits);
       this.#paint();
       this.#notify();
-      if (
-        [...this.#roots.values()].some(
-          (root) => root.task === undefined && root.failure === undefined && this.#demanded(root),
-        )
-      )
-        await this.#options.scheduler.yield(signal);
+      if (this.#pendingRoots(1).length > 0) await this.#options.scheduler.yield(signal);
       this.#check(identity, signal);
     }
     this.#paint();
     this.#notify();
   }
   #acceptBatch(batch: readonly RootLease[], hits: readonly TaskSearchHydratedHit[]): void {
+    const styles = new Map<HTMLElement, boolean>();
     for (const [index, root] of batch.entries()) {
-      if (this.#roots.get(root.key) !== root || root.users === 0 || !this.#demanded(root)) continue;
+      if (this.#roots.get(root.key) !== root || root.users === 0 || !this.#demanded(root, styles))
+        continue;
       const hit = hits[index];
       if (hit === undefined || rootKey(hit.hit.address) !== root.key)
         throw new TaskSearchError('stale', 'Search hydration changed');
