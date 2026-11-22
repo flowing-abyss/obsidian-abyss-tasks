@@ -468,6 +468,17 @@ describe('TagManager exact and prefix vault rename', () => {
     );
   });
 
+  it('skips ordinary prose between wiki links when finding visible tags', () => {
+    const prose = 'Ordinary prose without Markdown delimiters. '.repeat(500);
+    const source = `${prose}[[#work|#work]] ${prose}#work`;
+    const counted = countedString(source);
+
+    expect(transformMarkdownTags(counted.source, '#work', '#focus', 'exact')).toBe(
+      `${prose}[[#work|#focus]] ${prose}#focus`,
+    );
+    expect(counted.indexedReads()).toBeLessThan(prose.length);
+  });
+
   it('keeps unmatched label scanning within a linear indexed-read budget', () => {
     const readsFor = (
       bracketCount: number,

@@ -29,3 +29,12 @@ it('preserves the authored nested suffix when lowercase changes matched prefix l
     '---\ntags: [NEW/Child]\n---\n#NEW/Child `#i̇/Child`\n',
   );
 });
+
+it('ends an open wiki link at a newline inside inline code', () => {
+  const source = '[[#work/before #work `#code\nliteral` #work #work/after]]';
+
+  expect(extractMarkdownBodyTags(source)).toEqual(['#work/before', '#work', '#work/after']);
+  expect(transformMarkdownTags(source, '#work', '#job', 'exact')).toBe(
+    '[[#work/before #job `#code\nliteral` #job #work/after]]',
+  );
+});
