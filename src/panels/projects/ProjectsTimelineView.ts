@@ -775,6 +775,9 @@ export class ProjectsTimelineView<
     );
     const previous = this.stateOffsets_abyssPrivate;
     if (previous.left === offsets.left && previous.right === offsets.right) return;
+    // A native scroll or an editor pin can move markers before the calendar frame.
+    // Reconcile their visibility even if native scrolling returns to its last rendered position.
+    if (left !== this.lastLeft_abyssPrivate) this.calendarSignature_abyssPrivate = '';
     this.stateOffsets_abyssPrivate = offsets;
     for (const row of this.rows_abyssPrivate.values())
       patchTimelineRangeStateOffsets(row.state, offsets);
@@ -1153,11 +1156,9 @@ export class ProjectsTimelineView<
     this.removeUnusedRowCells_abyssPrivate(row, retained);
     // Editor and gesture pins may mount rows before the next calendar frame.
     const left = this.rendering_abyssPrivate ? this.lastLeft_abyssPrivate : this.scroll.scrollLeft;
-    const offsets =
-      left === this.stateOffsets_abyssPrivate.scrollLeft
-        ? this.stateOffsets_abyssPrivate
-        : timelineRangeStateOffsets(left, this.scroll.scrollWidth - this.scroll.clientWidth);
-    patchTimelineRangeStateOffsets(row.state, offsets);
+    if (left !== this.stateOffsets_abyssPrivate.scrollLeft)
+      this.syncRangeStateOffset_abyssPrivate(left);
+    patchTimelineRangeStateOffsets(row.state, this.stateOffsets_abyssPrivate);
     this.patchRange_abyssPrivate(row, item.range, window, left);
   }
 

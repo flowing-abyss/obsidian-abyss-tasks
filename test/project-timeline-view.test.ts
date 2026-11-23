@@ -435,12 +435,15 @@ describe('ProjectsTimelineView', () => {
   });
 
   it('keeps malformed range state aligned with the exposed date viewport while scrolling', () => {
+    const frames = controlledFrames();
     const { host, view } = mount([
       project('Projects/Invalid.md', '2026-09-20', '2026-09-10'),
       project('Projects/Future.md', undefined, '2032-01-03'),
     ]);
 
     Object.defineProperty(view.scroll, 'scrollWidth', { configurable: true, value: 33000 });
+    frames.run();
+    const originalLeft = view.scroll.scrollLeft;
     view.scroll.scrollLeft = 173.5;
     view.scroll.dispatchEvent(new Event('scroll'));
 
@@ -459,6 +462,11 @@ describe('ProjectsTimelineView', () => {
     expect(view.root.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe('');
     expect(view.root.style.getPropertyValue('--abyss-project-timeline-range-state-right')).toBe('');
     expect(host.querySelector('.abyss-project-timeline-show-range')).toBeNull();
+    view.scroll.scrollLeft = originalLeft;
+    frames.run();
+    expect(malformed.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
+      `${String(originalLeft + 10)}px`,
+    );
   });
 
   it('shows clipped endpoint handles only when their calendar day is visible', () => {
@@ -1720,7 +1728,7 @@ it('advances retained project row Today markers on a scroll-only midnight frame 
 });
 
 it.each([false, true])(
-  'positions newly mounted rows during a synchronous editor pin (scroll dispatched: %s)',
+  'positions pinned rows during a horizontal scroll and after it returns (scroll dispatched: %s)',
   (dispatch) => {
     const frames = controlledFrames();
     const items = Array.from({ length: 1100 }, (_, index) =>
@@ -1732,11 +1740,18 @@ it.each([false, true])(
       trackWidth: 32768,
       viewportWidth: 900,
     });
+    Object.defineProperty(h.view.scroll, 'scrollWidth', { configurable: true, value: 32948 });
     h.view.update(items, '');
     frames.run();
     const rows = () => [...h.host.querySelectorAll('.abyss-project-timeline-row')];
     const old = new Set(rows());
     const cell = expectDefined(h.view.renderedCells()[0]).element;
+    const retained = expectDefined(
+      cell
+        .closest('.abyss-project-timeline-row')
+        ?.querySelector<HTMLElement>('.abyss-project-timeline-state'),
+    );
+    const originalLeft = h.view.scroll.scrollLeft;
     const day = (projectCalendarDayOrdinal('2027-04-08') as number) + 0.5;
     h.view.scroll.scrollLeft += (day - projectTimelineLogicalCenter(h.view.scroll)) * 32;
     h.view.scroll.scrollTop = 80000;
@@ -1748,5 +1763,18 @@ it.each([false, true])(
     expect(marker.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
       `${String(h.view.scroll.scrollLeft + 10)}px`,
     );
+    h.view.scroll.scrollLeft = originalLeft;
+    frames.run();
+    for (const state of [retained, marker]) {
+      expect(state.isConnected).toBe(true);
+      expect(state.hidden).toBe(false);
+      expect(state.dataset['direction']).toBe('after');
+      expect(state.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
+        `${String(originalLeft + 10)}px`,
+      );
+      expect(state.style.getPropertyValue('--abyss-project-timeline-range-state-right')).toBe(
+        `${String(32948 - 900 - originalLeft + 10)}px`,
+      );
+    }
   },
 );

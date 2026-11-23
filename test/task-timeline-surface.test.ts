@@ -643,14 +643,15 @@ it('gives an immediate reveal priority over a pending restored center', () => {
   }
 });
 
-it('reveals a virtual row at the current calendar position before the scroll frame runs', () => {
+it('positions a revealed row at the native offset and reconciles an immediate return before any scroll event', () => {
   const h = continuousTimeline(900, { scheduled: localDate('2027-04-08') }, undefined, 5000);
   try {
+    h.flush();
+    const originalLeft = h.host.scrollLeft;
     const saved = h.surface.captureScroll();
     if (saved.center === 'today') throw new Error('Expected a measured calendar center');
     const day = (projectCalendarDayOrdinal('2027-04-08') as number) + 0.5;
     h.host.scrollLeft += (day - saved.center) * saved.viewport.dayWidth;
-    h.host.dispatchEvent(new Event('scroll'));
     const card = expectDefined(h.surface.reveal('row:4900'));
     const marker = expectDefined(
       card
@@ -659,6 +660,14 @@ it('reveals a virtual row at the current calendar position before the scroll fra
     );
     expect(h.surface.captureScroll().center).toBeCloseTo(day, 6);
     expect(marker.hidden).toBe(true);
+    h.host.scrollLeft = originalLeft;
+    h.flush();
+    expect(marker.isConnected).toBe(true);
+    expect(marker.hidden).toBe(false);
+    expect(marker.classList.contains('is-after')).toBe(true);
+    expect(marker.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
+      `${String(originalLeft + 10)}px`,
+    );
   } finally {
     h.dispose();
   }

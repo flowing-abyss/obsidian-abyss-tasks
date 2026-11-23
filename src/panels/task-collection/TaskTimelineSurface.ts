@@ -565,12 +565,15 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
         dates.range.kind !== 'unscheduled' &&
         dates.range.kind !== 'malformed',
     );
-    // Reveals can mount a row before the scheduled horizontal scroll frame.
     const left = this.options.scroll.scrollLeft;
-    const offsets =
-      left === this.#stateOffsets.scrollLeft
-        ? this.#stateOffsets
-        : timelineRangeStateOffsets(left, this.#geometry.trackWidth - this.#usableWidth);
+    let offsets = this.#stateOffsets;
+    if (left !== offsets.scrollLeft) {
+      // A reveal can mount a row between scroll events. Reconcile it even if scrolling
+      // returns to the previous frame's position without another event.
+      offsets = timelineRangeStateOffsets(left, this.#geometry.trackWidth - this.#usableWidth);
+      this.#calendarSignature = '';
+      this.#schedule();
+    }
     this.#patchState(mount, dates, this.#visibleStart(left), offsets);
   }
   #patchState(
