@@ -47,7 +47,9 @@ import {
   createTimelineRangeHandle,
   patchTimelineAxisCells,
   patchTimelineGrid,
+  patchTimelineRangeStateOffsets,
   patchTimelineToday,
+  timelineRangeStateOffsets,
 } from '../timeline/timelinePresentation';
 import { projectCardFields } from './projectCardFields';
 import {
@@ -291,6 +293,7 @@ export class ProjectsTimelineView<
   private viewport_abyssPrivate: TimelineViewport;
   private usableWidth_abyssPrivate = 0;
   private lastLeft_abyssPrivate = 0;
+  private stateOffsets_abyssPrivate = timelineRangeStateOffsets(0, 0);
   private calendarSignature_abyssPrivate = '';
   private calendarDay_abyssPrivate = '';
   private renderedScale_abyssPrivate: ProjectTimelineSettings['scale'];
@@ -352,7 +355,6 @@ export class ProjectsTimelineView<
       attr: { 'aria-hidden': 'true' },
     });
     this.groupsHost_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-groups' });
-    this.syncRangeStateOffset_abyssPrivate();
     this.scroll.addEventListener('scroll', this.scrollChanged_abyssPrivate, {
       passive: true,
     });
@@ -565,7 +567,7 @@ export class ProjectsTimelineView<
     if (row === undefined) return;
     if (
       this.pendingCenter_abyssPrivate !== undefined ||
-      !this.rangeExposed_abyssPrivate(row.range)
+      !this.rangeExposed_abyssPrivate(row.range, this.scroll.scrollLeft)
     ) {
       const anchor = rangeAnchor(row.range);
       if (anchor !== undefined) {
@@ -609,13 +611,16 @@ export class ProjectsTimelineView<
     return this.viewport_abyssPrivate.window;
   }
 
-  private rangeExposed_abyssPrivate(range: ProjectTimelineRange): boolean {
+  private rangeExposed_abyssPrivate(
+    range: ProjectTimelineRange,
+    left = this.lastLeft_abyssPrivate,
+  ): boolean {
     const start = rangeAnchor(range);
     if (start === undefined) return false;
     const end = range.kind === 'closed' ? range.endDay : start;
     const first =
       dayOrdinal(this.currentWindow_abyssPrivate().startDay) +
-      this.scroll.scrollLeft / this.viewport_abyssPrivate.dayWidth;
+      left / this.viewport_abyssPrivate.dayWidth;
     return (
       dayOrdinal(start) <
         first + this.usableWidth_abyssPrivate / this.viewport_abyssPrivate.dayWidth &&
@@ -661,7 +666,7 @@ export class ProjectsTimelineView<
     const signature = `${window.startDay}:${window.scale}:${this.lastLeft_abyssPrivate}:${usable}:${today}`;
     if (signature === this.calendarSignature_abyssPrivate) return;
     this.calendarSignature_abyssPrivate = signature;
-    this.syncRangeStateOffset_abyssPrivate();
+    this.syncRangeStateOffset_abyssPrivate(this.lastLeft_abyssPrivate);
     this.patchVisibleCalendar_abyssPrivate(window, dayChanged);
     for (const row of this.rows_abyssPrivate.values()) {
       if (changed) this.patchRange_abyssPrivate(row, row.range, window);
@@ -673,9 +678,9 @@ export class ProjectsTimelineView<
   }
 
   private readonly scrollChanged_abyssPrivate = (): void => {
-    if (this.scroll.scrollLeft !== this.lastLeft_abyssPrivate)
-      this.pendingCenter_abyssPrivate = undefined;
-    this.syncRangeStateOffset_abyssPrivate();
+    const left = this.scroll.scrollLeft;
+    if (left !== this.lastLeft_abyssPrivate) this.pendingCenter_abyssPrivate = undefined;
+    this.syncRangeStateOffset_abyssPrivate(left);
   };
 
   private render_abyssPrivate(): ProjectTimelineModel {
@@ -763,16 +768,17 @@ export class ProjectsTimelineView<
     this.interaction_abyssPrivate.reconcileAfterRender();
   }
 
-  private readonly syncRangeStateOffset_abyssPrivate = (): void => {
-    this.root.style.setProperty(
-      '--abyss-project-timeline-range-state-left',
-      `${this.scroll.scrollLeft + 10}px`,
+  private syncRangeStateOffset_abyssPrivate(left: number): void {
+    const offsets = timelineRangeStateOffsets(
+      left,
+      this.scroll.scrollWidth - this.scroll.clientWidth,
     );
-    this.root.style.setProperty(
-      '--abyss-project-timeline-range-state-right',
-      `${Math.max(10, this.scroll.scrollWidth - this.scroll.scrollLeft - this.scroll.clientWidth + 10)}px`,
-    );
-  };
+    const previous = this.stateOffsets_abyssPrivate;
+    if (previous.left === offsets.left && previous.right === offsets.right) return;
+    this.stateOffsets_abyssPrivate = offsets;
+    for (const row of this.rows_abyssPrivate.values())
+      patchTimelineRangeStateOffsets(row.state, offsets);
+  }
 
   private restoreFocus_abyssPrivate(
     focused: HTMLElement | undefined,
@@ -804,7 +810,7 @@ export class ProjectsTimelineView<
   } {
     const first = dayOrdinal(window.startDay);
     const trackWidth = this.viewport_abyssPrivate.trackWidth;
-    const visibleLeft = clamp(this.scroll.scrollLeft, 0, trackWidth);
+    const visibleLeft = clamp(this.lastLeft_abyssPrivate, 0, trackWidth);
     const visibleRight = clamp(
       visibleLeft + Math.max(1, this.usableWidth_abyssPrivate),
       visibleLeft,
@@ -1145,6 +1151,7 @@ export class ProjectsTimelineView<
     this.patchMetadata_abyssPrivate({ row, item, visibleCells, retained, fields, settings });
     this.patchProgress_abyssPrivate({ row, item, visibleCells, retained, fields, settings });
     this.removeUnusedRowCells_abyssPrivate(row, retained);
+    patchTimelineRangeStateOffsets(row.state, this.stateOffsets_abyssPrivate);
     this.patchRange_abyssPrivate(row, item.range, window);
   }
 
@@ -1359,7 +1366,7 @@ export class ProjectsTimelineView<
     const anchor = rangeAnchor(range) as string;
     const direction =
       dayOrdinal(anchor) <
-      dayOrdinal(window.startDay) + this.scroll.scrollLeft / this.viewport_abyssPrivate.dayWidth
+      dayOrdinal(window.startDay) + this.lastLeft_abyssPrivate / this.viewport_abyssPrivate.dayWidth
         ? 'before'
         : 'after';
     row.state.hidden = false;

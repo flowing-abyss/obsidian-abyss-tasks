@@ -53,7 +53,9 @@ import {
   createTimelineRangeHandle,
   patchTimelineAxisCells,
   patchTimelineGrid,
+  patchTimelineRangeStateOffsets,
   patchTimelineToday,
+  timelineRangeStateOffsets,
 } from '../timeline/timelinePresentation';
 import type { TaskCollectionSurface } from './TaskCollectionSurface';
 
@@ -133,6 +135,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #geometry: TimelineViewport;
   #usableWidth = 0;
   #lastLeft = 0;
+  #stateOffsets = timelineRangeStateOffsets(0, 0);
   #calendarSignature = '';
   #todayDay = '';
   #scale: ProjectTimelineScale;
@@ -362,12 +365,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       'abyss-project-timeline-scroll',
       'abyss-task-timeline--hide-metadata',
     );
-    for (const property of [
-      '--abyss-project-timeline-track-width',
-      '--abyss-project-timeline-range-state-left',
-      '--abyss-project-timeline-range-state-right',
-    ])
-      this.options.host.style.removeProperty(property);
+    this.options.host.style.removeProperty('--abyss-project-timeline-track-width');
     delete this.options.host.dataset['descriptionLines'];
   }
   #key(identity: string): string {
@@ -572,7 +570,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #patchState(
     mount: TimelineMount<T>,
     dates: ReturnType<typeof taskTimelineDates>,
-    visibleStart = this.#visibleStart(),
+    visibleStart = this.#visibleStart(this.#lastLeft),
   ): void {
     const range =
       dates.range.kind === 'unscheduled' &&
@@ -580,6 +578,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       this.actions.settings().showScheduled
         ? { kind: 'open-end' as const, startDay: dates.scheduled }
         : dates.range;
+    patchTimelineRangeStateOffsets(mount.state, this.#stateOffsets);
     mount.state.hidden = this.#rangeVisible(range, visibleStart);
     mount.state.disabled = range.kind === 'unscheduled';
     if (range.kind === 'malformed') {
@@ -623,12 +622,13 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#pendingCenter = 'today';
     this.#navigationChanged();
   }
-  #visibleStart(): number {
-    return (
-      ordinal(this.#window().startDay) + this.options.scroll.scrollLeft / this.#geometry.dayWidth
-    );
+  #visibleStart(left: number): number {
+    return ordinal(this.#window().startDay) + left / this.#geometry.dayWidth;
   }
-  #rangeVisible(range: ProjectTimelineRange, visibleStart = this.#visibleStart()): boolean {
+  #rangeVisible(
+    range: ProjectTimelineRange,
+    visibleStart = this.#visibleStart(this.options.scroll.scrollLeft),
+  ): boolean {
     const values = bounds(range);
     if (values.length === 0) return false;
     const first = ordinal(values[0] as string),
@@ -679,16 +679,9 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     const signature = `${window.startDay}:${window.scale}:${this.#lastLeft}:${usable}:${todayDay}`;
     if (signature === this.#calendarSignature) return;
     this.#calendarSignature = signature;
-    this.options.host.style.setProperty(
-      '--abyss-project-timeline-range-state-left',
-      `${this.options.scroll.scrollLeft + 10}px`,
-    );
-    this.options.host.style.setProperty(
-      '--abyss-project-timeline-range-state-right',
-      `${Math.max(10, trackWidth - this.options.scroll.scrollLeft - usable + 10)}px`,
-    );
+    this.#stateOffsets = timelineRangeStateOffsets(this.#lastLeft, trackWidth - usable);
     const first = ordinal(window.startDay),
-      left = Math.max(0, this.options.scroll.scrollLeft);
+      left = Math.max(0, this.#lastLeft);
     const startOffset = Math.min(
       window.dayCount - 1,
       Math.floor((left / trackWidth) * window.dayCount),
@@ -728,7 +721,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   }
   #patchMountedCalendar(changed: boolean, todayChanged: boolean): void {
     const window = this.#window(),
-      visibleStart = this.#visibleStart();
+      visibleStart = this.#visibleStart(this.#lastLeft);
     for (const mount of this.#mounts.values()) {
       patchTimelineGrid(mount.grid, this.#axisLayout);
       if (changed || todayChanged) patchTimelineToday(mount.track, window, this.actions.now());

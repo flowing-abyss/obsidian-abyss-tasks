@@ -629,6 +629,40 @@ it.each(['commit', 'cancel'] as const)(
   },
 );
 
+it('positions only the row markers from the applied scroll offset, including newly mounted rows', () => {
+  const h = continuousTimeline(900, {}, undefined, 5000);
+  let left = 100.375;
+  Object.defineProperty(h.host, 'scrollLeft', {
+    configurable: true,
+    get: () => left,
+    set: (requested: number) => {
+      left = Math.floor(requested) + 0.25;
+    },
+  });
+  const marker = () =>
+    expectDefined(h.host.querySelector<HTMLElement>('.abyss-project-timeline-state'));
+  try {
+    h.host.dispatchEvent(new Event('scroll'));
+    h.flush();
+    expect(left).toBeGreaterThan(1000);
+    const first = marker();
+    const leftProperty = '--abyss-project-timeline-range-state-left';
+    const rightProperty = '--abyss-project-timeline-range-state-right';
+    const right = h.surface.captureScroll().viewport.trackWidth - left - 720 + 10;
+    expect(first.style.getPropertyValue(leftProperty)).toBe(`${left + 10}px`);
+    expect(first.style.getPropertyValue(rightProperty)).toBe(`${right}px`);
+    expect(h.host.style.getPropertyValue(leftProperty)).toBe('');
+    expect(h.host.style.getPropertyValue(rightProperty)).toBe('');
+    h.host.scrollTop = 60000;
+    h.host.dispatchEvent(new Event('scroll'));
+    h.flush();
+    expect(first.isConnected).toBe(false);
+    expect(marker().style.getPropertyValue(leftProperty)).toBe(`${left + 10}px`);
+  } finally {
+    h.dispose();
+  }
+});
+
 it('bounds native horizontal geometry reads as the mounted row count grows', () => {
   function sample(count: number) {
     const h = continuousTimeline(900, undefined, undefined, count);

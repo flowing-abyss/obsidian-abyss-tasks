@@ -440,13 +440,24 @@ describe('ProjectsTimelineView', () => {
       project('Projects/Future.md', undefined, '2032-01-03'),
     ]);
 
+    Object.defineProperty(view.scroll, 'scrollWidth', { configurable: true, value: 33000 });
     view.scroll.scrollLeft = 173.5;
     view.scroll.dispatchEvent(new Event('scroll'));
 
-    expect(view.root.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
+    const malformed = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-state.is-malformed'),
+    );
+    const future = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-state.is-after'),
+    );
+    expect(malformed.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
       '183.5px',
     );
-    expect(host.querySelector('.abyss-project-timeline-state')).not.toBeNull();
+    expect(future.style.getPropertyValue('--abyss-project-timeline-range-state-right')).toBe(
+      '32436.5px',
+    );
+    expect(view.root.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe('');
+    expect(view.root.style.getPropertyValue('--abyss-project-timeline-range-state-right')).toBe('');
     expect(host.querySelector('.abyss-project-timeline-show-range')).toBeNull();
   });
 
@@ -1378,6 +1389,10 @@ it('coalesces horizontal grids and vertical windows and gives fresh rows the cur
   );
   expect(grids.length).toBeGreaterThan(0);
   for (const grid of grids) expect(grid).toEqual(grids[0]);
+  const marker = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-state'));
+  expect(marker.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
+    `${view.scroll.scrollLeft + 10}px`,
+  );
   const expectedDays = [
     ...host.querySelectorAll<HTMLElement>('.abyss-project-timeline-axis-cell'),
   ].map((cell) => cell.dataset['startDay']);

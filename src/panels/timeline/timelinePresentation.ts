@@ -15,6 +15,26 @@ export const TIMELINE_SCALES = [
   ['year', 'Year'],
 ] as const;
 
+interface TimelineRangeStateOffsets {
+  readonly left: string;
+  readonly right: string;
+}
+
+export function timelineRangeStateOffsets(
+  left: number,
+  maximum: number,
+): TimelineRangeStateOffsets {
+  return { left: `${left + 10}px`, right: `${Math.max(0, maximum - left) + 10}px` };
+}
+
+export function patchTimelineRangeStateOffsets(
+  state: HTMLElement,
+  offsets: TimelineRangeStateOffsets,
+): void {
+  state.style.setProperty('--abyss-project-timeline-range-state-left', offsets.left);
+  state.style.setProperty('--abyss-project-timeline-range-state-right', offsets.right);
+}
+
 export function createTimelineRangeHandle(
   bar: HTMLElement,
   endpoint: 'start' | 'end',
