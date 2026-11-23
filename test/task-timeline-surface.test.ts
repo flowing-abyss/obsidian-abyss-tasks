@@ -629,6 +629,20 @@ it.each(['commit', 'cancel'] as const)(
   },
 );
 
+it('gives an immediate reveal priority over a pending restored center', () => {
+  const h = continuousTimeline(900, { scheduled: localDate('2026-10-29') });
+  try {
+    h.surface.restoreScroll(h.surface.captureScroll());
+    h.host.scrollLeft += 4;
+    h.surface.reveal('one');
+    expect(h.surface.captureScroll().center).toBe(
+      (projectCalendarDayOrdinal('2026-10-29') as number) + 0.5,
+    );
+  } finally {
+    h.dispose();
+  }
+});
+
 it('reveals a virtual row at the current calendar position before the scroll frame runs', () => {
   const h = continuousTimeline(900, { scheduled: localDate('2027-04-08') }, undefined, 5000);
   try {

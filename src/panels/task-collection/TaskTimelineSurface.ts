@@ -295,9 +295,6 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   reveal(key: string): HTMLElement | undefined;
   reveal(key: string, options: { readonly waitForReady: true }): RevealResult;
   reveal(key: string, options?: { readonly waitForReady: true }): RevealResult {
-    // A reveal can mount rows between native scrolling and the scheduled calendar update.
-    if (!this.#destroyed && !this.#suspended && this.options.scroll.scrollLeft !== this.#lastLeft)
-      this.#calendar();
     const result =
       options === undefined ? this.#viewport.reveal(key) : this.#viewport.reveal(key, options);
     const task = this.rows.task(key);
@@ -568,12 +565,19 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
         dates.range.kind !== 'unscheduled' &&
         dates.range.kind !== 'malformed',
     );
-    this.#patchState(mount, dates);
+    // Reveals can mount a row before the scheduled horizontal scroll frame.
+    const left = this.options.scroll.scrollLeft;
+    const offsets =
+      left === this.#stateOffsets.scrollLeft
+        ? this.#stateOffsets
+        : timelineRangeStateOffsets(left, this.#geometry.trackWidth - this.#usableWidth);
+    this.#patchState(mount, dates, this.#visibleStart(left), offsets);
   }
   #patchState(
     mount: TimelineMount<T>,
     dates: ReturnType<typeof taskTimelineDates>,
-    visibleStart = this.#visibleStart(this.#lastLeft),
+    visibleStart: number,
+    offsets = this.#stateOffsets,
   ): void {
     const range =
       dates.range.kind === 'unscheduled' &&
@@ -581,7 +585,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       this.actions.settings().showScheduled
         ? { kind: 'open-end' as const, startDay: dates.scheduled }
         : dates.range;
-    patchTimelineRangeStateOffsets(mount.state, this.#stateOffsets);
+    patchTimelineRangeStateOffsets(mount.state, offsets);
     mount.state.hidden = this.#rangeVisible(range, visibleStart);
     mount.state.disabled = range.kind === 'unscheduled';
     if (range.kind === 'malformed') {

@@ -1151,8 +1151,14 @@ export class ProjectsTimelineView<
     this.patchMetadata_abyssPrivate({ row, item, visibleCells, retained, fields, settings });
     this.patchProgress_abyssPrivate({ row, item, visibleCells, retained, fields, settings });
     this.removeUnusedRowCells_abyssPrivate(row, retained);
-    patchTimelineRangeStateOffsets(row.state, this.stateOffsets_abyssPrivate);
-    this.patchRange_abyssPrivate(row, item.range, window);
+    // Editor and gesture pins may mount rows before the next calendar frame.
+    const left = this.rendering_abyssPrivate ? this.lastLeft_abyssPrivate : this.scroll.scrollLeft;
+    const offsets =
+      left === this.stateOffsets_abyssPrivate.scrollLeft
+        ? this.stateOffsets_abyssPrivate
+        : timelineRangeStateOffsets(left, this.scroll.scrollWidth - this.scroll.clientWidth);
+    patchTimelineRangeStateOffsets(row.state, offsets);
+    this.patchRange_abyssPrivate(row, item.range, window, left);
   }
 
   private renderRowCell_abyssPrivate(options: {
@@ -1293,6 +1299,7 @@ export class ProjectsTimelineView<
     row: RenderedRow<TCell>,
     range: ProjectTimelineRange,
     window: ProjectTimelineWindow,
+    left = this.lastLeft_abyssPrivate,
   ): void {
     this.addTodayMarker_abyssPrivate(row.track, window);
     patchTimelineGrid(row.grid, this.axisLayout_abyssPrivate);
@@ -1300,12 +1307,12 @@ export class ProjectsTimelineView<
     const geometry = projectTimelineBarGeometry(range, window);
     if (geometry === undefined) {
       row.bar.hidden = true;
-      this.renderMissingRange_abyssPrivate(row, range, window);
+      this.renderMissingRange_abyssPrivate(row, range, window, left);
       return;
     }
     this.patchVisibleRange_abyssPrivate(row, range, window, geometry);
-    if (!this.rangeExposed_abyssPrivate(range))
-      this.renderMissingRange_abyssPrivate(row, range, window);
+    if (!this.rangeExposed_abyssPrivate(range, left))
+      this.renderMissingRange_abyssPrivate(row, range, window, left);
   }
 
   private patchRangeEditability_abyssPrivate(row: RenderedRow<TCell>): void {
@@ -1355,6 +1362,7 @@ export class ProjectsTimelineView<
     row: RenderedRow<TCell>,
     range: ProjectTimelineRange,
     window: ProjectTimelineWindow,
+    left = this.lastLeft_abyssPrivate,
   ): void {
     if (range.kind === 'unscheduled' || range.kind === 'malformed') {
       row.state.hidden = false;
@@ -1365,8 +1373,7 @@ export class ProjectsTimelineView<
     }
     const anchor = rangeAnchor(range) as string;
     const direction =
-      dayOrdinal(anchor) <
-      dayOrdinal(window.startDay) + this.lastLeft_abyssPrivate / this.viewport_abyssPrivate.dayWidth
+      dayOrdinal(anchor) < dayOrdinal(window.startDay) + left / this.viewport_abyssPrivate.dayWidth
         ? 'before'
         : 'after';
     row.state.hidden = false;

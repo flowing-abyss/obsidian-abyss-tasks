@@ -16,6 +16,7 @@ export const TIMELINE_SCALES = [
 ] as const;
 
 interface TimelineRangeStateOffsets {
+  readonly scrollLeft: number;
   readonly left: string;
   readonly right: string;
 }
@@ -24,7 +25,11 @@ export function timelineRangeStateOffsets(
   left: number,
   maximum: number,
 ): TimelineRangeStateOffsets {
-  return { left: `${left + 10}px`, right: `${Math.max(0, maximum - left) + 10}px` };
+  return {
+    scrollLeft: left,
+    left: `${left + 10}px`,
+    right: `${Math.max(0, maximum - left) + 10}px`,
+  };
 }
 
 export function patchTimelineRangeStateOffsets(

@@ -1718,3 +1718,35 @@ it('advances retained project row Today markers on a scroll-only midnight frame 
   expect(modelInput).not.toHaveBeenCalled();
   expect(renderCell).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  'positions newly mounted rows during a synchronous editor pin (scroll dispatched: %s)',
+  (dispatch) => {
+    const frames = controlledFrames();
+    const items = Array.from({ length: 1100 }, (_, index) =>
+      project(`Projects/${String(index)}.md`, '2027-04-08'),
+    );
+    const h = mount(items, new Date(2026, 8, 13), 'day');
+    mockTimelineGeometry(h.host, h.view, {
+      summaryWidth: 180,
+      trackWidth: 32768,
+      viewportWidth: 900,
+    });
+    h.view.update(items, '');
+    frames.run();
+    const rows = () => [...h.host.querySelectorAll('.abyss-project-timeline-row')];
+    const old = new Set(rows());
+    const cell = expectDefined(h.view.renderedCells()[0]).element;
+    const day = (projectCalendarDayOrdinal('2027-04-08') as number) + 0.5;
+    h.view.scroll.scrollLeft += (day - projectTimelineLogicalCenter(h.view.scroll)) * 32;
+    h.view.scroll.scrollTop = 80000;
+    if (dispatch) h.view.scroll.dispatchEvent(new Event('scroll'));
+    h.view.setEditingCell(cell);
+    const row = expectDefined(rows().find((element) => !old.has(element)));
+    const marker = expectDefined(row.querySelector<HTMLElement>('.abyss-project-timeline-state'));
+    expect(marker.hidden).toBe(true);
+    expect(marker.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
+      `${String(h.view.scroll.scrollLeft + 10)}px`,
+    );
+  },
+);
