@@ -747,6 +747,33 @@ describe('lazy complete task statistics evidence', () => {
     ]);
   });
 
+  it('reads cancellation and date issues from physical task lines without rebuilding titles', async () => {
+    const { index } = await harness({
+      'live.md': [
+        '- [ ] Valid 📅2026-09-01 ❌ 2026-10-01',
+        '  - [ ] Child ❌ bad ❌ 2026-02-31 🛫 2026-02-29',
+        '- [ ] Literal `❌ 2026-99-99` [[📅 2026-99-99]] <span title="✅ 2026-99-99">',
+        '- [ ] Malformed ❌ nope 📅️ 2026-09-01',
+        '- [ ] Terminal ^bad❌2026-01-03',
+      ].join('\n'),
+    });
+    await index.initialize();
+    const parseLine = vi.spyOn(TaskMarkdownCodec.prototype, 'parseLine');
+    index.subscribeStatistics(() => {});
+    await index.whenStatisticsSettled();
+    const file = expectDefined(index.readStatistics().files[0]);
+    expect(file.roots.map((root) => root.status)).toEqual(['cancelled', 'open', 'open', 'open']);
+    expect(file.roots[0]?.subtasks[0]?.status).toBe('cancelled');
+    expect(file.roots[0]?.subtasks[0]?.planning.cancelled).toBeUndefined();
+    expect(file.dateIssues).toEqual([
+      { line: 1, field: 'cancelled', reason: 'ambiguous-date' },
+      { line: 1, field: 'start', reason: 'invalid-date' },
+      { line: 3, field: 'cancelled', reason: 'invalid-date' },
+      { line: 3, field: 'due', reason: 'invalid-date' },
+    ]);
+    expect(parseLine).not.toHaveBeenCalled();
+  });
+
   it.each(['rename', 'delete', 'disable'] as const)(
     'rejects stale acquisition after %s during initialization',
     async (event) => {

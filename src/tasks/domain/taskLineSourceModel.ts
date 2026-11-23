@@ -299,6 +299,7 @@ function terminalCaretRange(
   body: string,
   sortedAtomicRanges: readonly SourceRange[],
 ): SourceRange | undefined {
+  if (!body.includes('^')) return undefined;
   let to = body.length;
   while (to > 0 && /\s/u.test(body[to - 1] ?? '')) to--;
   const from = terminalTokenStart(body, to, sortedAtomicRanges);
@@ -749,6 +750,36 @@ function acceptedCandidates(context: TaskLineParseContext): Candidate[] {
     acceptedTo = candidate.to;
   }
   return accepted;
+}
+
+type DateField = (typeof DATE_PATTERNS)[number]['kind'];
+
+export interface TaskLineDateEvidence {
+  readonly count: number;
+  readonly value: string | undefined;
+}
+
+const dateFields: ReadonlySet<string> = new Set(DATE_PATTERNS.map(({ kind }) => kind));
+
+function isDateField(kind: string | undefined): kind is DateField {
+  return kind !== undefined && dateFields.has(kind);
+}
+
+/** Count accepted date carriers, including malformed ones, without projecting a full task line. */
+export function taskLineDateEvidence(
+  original: string,
+): ReadonlyMap<DateField, TaskLineDateEvidence> {
+  const dates = new Map<DateField, TaskLineDateEvidence>();
+  const context = taskLineParseContext(original);
+  if (context === null) return dates;
+  for (const carrier of acceptedCandidates(context)) {
+    const field = carrier.kind === 'malformed-known' ? carrier.malformedKind : carrier.kind;
+    if (!isDateField(field)) continue;
+    const previous = dates.get(field);
+    const value = typeof carrier.value === 'string' ? carrier.value : undefined;
+    dates.set(field, { count: (previous?.count ?? 0) + 1, value: previous?.value ?? value });
+  }
+  return dates;
 }
 
 function spansFor(

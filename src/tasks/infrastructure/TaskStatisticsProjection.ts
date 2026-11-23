@@ -5,6 +5,7 @@ import type {
   TaskStatisticsSourceIssue,
 } from '../application/TaskStatisticsSource';
 import type { StatusCatalog } from '../domain/StatusCatalog';
+import { taskLineDateEvidence, type TaskLineDateEvidence } from '../domain/taskLineSourceModel';
 import type { TimeEntrySnapshot } from '../domain/timeTracking';
 import type {
   SubtaskSnapshot,
@@ -14,7 +15,6 @@ import type {
   TaskStatus,
 } from '../domain/types';
 import { localDate } from '../domain/validation';
-import { TaskMarkdownCodec, type ParsedTaskLine } from './markdown/TaskMarkdownCodec';
 
 export interface StatisticsProjectionInput {
   readonly path: string;
@@ -45,21 +45,11 @@ const DATE_FIELDS: ReadonlyArray<TaskStatisticsDateIssue['field']> = [
   'start',
 ];
 
-function dateIssue(
-  parsed: ParsedTaskLine,
-  field: TaskStatisticsDateIssue['field'],
-): TaskStatisticsDateIssue['reason'] | undefined {
-  const occurrences = parsed.occurrences.get(field)?.length ?? 0;
-  const malformed = parsed.spans.filter(
-    (span) => span.kind === 'malformed-known' && span.malformedKind === field,
-  ).length;
-  if (occurrences + malformed > 1) return 'ambiguous-date';
-  if (malformed > 0) return 'invalid-date';
-  if (occurrences === 0) return undefined;
-  const value = parsed.planning[field];
-  if (value === undefined) return 'invalid-date';
+function dateIssue(evidence: TaskLineDateEvidence): TaskStatisticsDateIssue['reason'] | undefined {
+  if (evidence.count > 1) return 'ambiguous-date';
+  if (evidence.value === undefined) return 'invalid-date';
   try {
-    localDate(value);
+    localDate(evidence.value);
     return undefined;
   } catch {
     return 'invalid-date';
@@ -87,7 +77,6 @@ async function consumeSteps(steps: Iterable<void>, current: () => boolean): Prom
 interface NodeEvidence {
   readonly input: StatisticsProjectionInput;
   readonly issues: TaskStatisticsDateIssue[];
-  readonly codec: TaskMarkdownCodec;
 }
 
 function projectNodeEvidence(
@@ -96,19 +85,16 @@ function projectNodeEvidence(
   markdown: string,
   context: NodeEvidence,
 ): TaskStatus {
-  const parsed = context.codec.parseLine(markdown, { filePath: context.input.path, line });
-  const cancelled = parsed?.planning.cancelled;
-  const status =
-    cancelled !== undefined && cancelled.length > 0
-      ? 'cancelled'
-      : context.input.statusCatalog.statusForSymbol(node.statusSymbol);
-  if (parsed !== null) {
-    for (const field of DATE_FIELDS) {
-      const reason = dateIssue(parsed, field);
-      if (reason !== undefined) context.issues.push(Object.freeze({ line, field, reason }));
-    }
+  const dates = taskLineDateEvidence(markdown);
+  for (const field of DATE_FIELDS) {
+    const evidence = dates.get(field);
+    if (evidence === undefined) continue;
+    const reason = dateIssue(evidence);
+    if (reason !== undefined) context.issues.push(Object.freeze({ line, field, reason }));
   }
-  return status;
+  return dates.get('cancelled')?.value !== undefined
+    ? 'cancelled'
+    : context.input.statusCatalog.statusForSymbol(node.statusSymbol);
 }
 
 interface DetachedNodeFields {
@@ -218,7 +204,6 @@ async function projectFile(
   const context: NodeEvidence = {
     input,
     issues,
-    codec: new TaskMarkdownCodec(input.statusCatalog),
   };
   if (!(await consumeSteps(detachedRootSteps(roots, copies, context), current))) return undefined;
   return Object.freeze({

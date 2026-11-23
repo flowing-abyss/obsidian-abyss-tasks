@@ -171,7 +171,9 @@ paths, tags, and frontmatter. Table, Kanban, and Timeline share field definition
 edit. Moving a task into a project uses the task application service. Pure project models take
 explicit time and data. Analysis consumes a separate [statistics projection](src/tasks/infrastructure/TaskStatisticsProjection.ts)
 that can include permitted archive evidence without introducing archived tasks into ordinary
-lists. It reports gaps in coverage alongside totals.
+lists. The projection reads cancellation dates and date errors from each physical task line
+using the [canonical Markdown grammar](src/tasks/domain/taskLineSourceModel.ts). It reports gaps
+in coverage alongside totals.
 [Project write tests](test/project-integration-writes.test.ts) · [Statistics source tests](test/tasks/task-statistics-source.test.ts)
 
 ## Public client and Command mode
