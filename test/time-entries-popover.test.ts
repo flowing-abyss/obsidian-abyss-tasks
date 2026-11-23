@@ -378,6 +378,9 @@ describe('tracked sessions popover', () => {
       'abyss-time-row-tail pairing',
       'abyss-time-row-node Child',
     ]);
+    expect(cssRuleSelectorsFor(css, '.abyss-time-row-note > span + span')).toEqual([]);
+    const spacing = cssDeclarationsFor(css, 'span + span.abyss-time-row-node');
+    expect(cssDeclarationValue(spacing, 'margin-inline-start')).toBe('var(--size-4-2)');
   });
 
   it('carries the note as the row tooltip, at every width', async () => {

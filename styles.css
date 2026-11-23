@@ -10543,7 +10543,8 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   color: var(--text-muted);
 }
 
-.abyss-time-row-note > span + span {
+/* The class limits sibling invalidation when unrelated virtual lists remove rows. */
+span + span.abyss-time-row-node {
   margin-inline-start: var(--size-4-2);
 }
 
