@@ -1,3 +1,4 @@
+import type { App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as dependencies from '../../src/tasks/domain/taskDependencies';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
@@ -36,14 +37,26 @@ function scheduler() {
     },
   };
 }
+function preparationIndex(app: App, readYield: (signal: AbortSignal) => Promise<void>): TaskIndex {
+  let ready = false;
+  const index = new TaskIndex(app, {
+    statusCatalog: canonicalStatusCatalog(),
+    // Startup shares this scheduler. Only dependency yields are stepped by these tests.
+    readYield: (signal) => (ready ? readYield(signal) : Promise.resolve()),
+  });
+  const off = index.subscribe((event) => {
+    if (event.type === 'initialized') {
+      ready = true;
+      off();
+    }
+  });
+  indexes.push(index);
+  return index;
+}
 async function setup(markdown = '- [ ] Blocker 🆔 a\n- [ ] Dependent ⛔ a', initialize = true) {
   const app = await createAppWithFiles({ 'a.md': markdown });
   const clock = scheduler();
-  const index = new TaskIndex(app, {
-    statusCatalog: canonicalStatusCatalog(),
-    readYield: clock.readYield,
-  });
-  indexes.push(index);
+  const index = preparationIndex(app, clock.readYield);
   if (initialize) await index.initialize();
   return { index, app, clock };
 }
@@ -205,6 +218,8 @@ describe('canonical dependency preparation', () => {
     const pending = index.prepareDependencies(0, signal());
     await ticks();
     expect(clock.readYield).not.toHaveBeenCalled();
+    // Exercise a startup yield before the dependency scheduler takes control.
+    vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValue(1_000);
     await index.initialize();
     await finish(clock);
     await pending;
@@ -349,9 +364,9 @@ describe('atomic invalidation callbacks', () => {
     async (change) => {
       const app = await createAppWithFiles({ 'a.md': '- [ ] Blocker 🆔 a\n- [ ] Dependent ⛔ a' });
       const counts: number[] = [];
-      const index = new TaskIndex(app, {
-        statusCatalog: canonicalStatusCatalog(),
-        readYield: (signal) =>
+      const index = preparationIndex(
+        app,
+        (signal) =>
           new Promise((_resolve, reject) => {
             signal.addEventListener(
               'abort',
@@ -362,8 +377,7 @@ describe('atomic invalidation callbacks', () => {
               { once: true },
             );
           }),
-      });
-      indexes.push(index);
+      );
       await index.initialize();
       const target = expectDefined(index.listNodes()[1]).target;
       const pending = index
@@ -444,9 +458,9 @@ describe('disposed reentrant readers', () => {
   it('an abort callback cannot resurrect canonical graph ownership during destruction', async () => {
     const app = await createAppWithFiles({ 'a.md': '- [ ] Blocker 🆔 a\n- [ ] Dependent ⛔ a' });
     const observations: number[] = [];
-    const index = new TaskIndex(app, {
-      statusCatalog: canonicalStatusCatalog(),
-      readYield: (signal) =>
+    const index = preparationIndex(
+      app,
+      (signal) =>
         new Promise((_resolve, reject) => {
           signal.addEventListener(
             'abort',
@@ -457,8 +471,7 @@ describe('disposed reentrant readers', () => {
             { once: true },
           );
         }),
-    });
-    indexes.push(index);
+    );
     await index.initialize();
     const target = expectDefined(index.listNodes()[1]).target;
     const pending = index
