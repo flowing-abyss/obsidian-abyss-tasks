@@ -343,7 +343,7 @@ export class ProjectsPanel {
     if (dashboard !== null) disposeProjectDashboard(dashboard);
     dashboard?.remove();
     this.dashboardHost_abyssPrivate = null;
-    el.appendChild(tableHost);
+    if (el.lastChild !== tableHost) el.appendChild(tableHost);
     if (!tableAlreadyCurrent)
       this.tableView_abyssPrivate?.update(this.projectStore_abyssPrivate.list());
     if (dashboard !== null) this.tableView_abyssPrivate?.restoreDashboardFocus(allowFocus);

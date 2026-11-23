@@ -505,7 +505,13 @@ describe('ProjectsPanel dispatch', () => {
     const el = freshContainer();
 
     el.ownerDocument.body.append(el);
+    const observer = new MutationObserver(() => {});
+    observer.observe(el, { childList: true });
     panel.mount(el);
+    const host = expectDefined(el.querySelector('.abyss-projects-table-session'));
+    const detached = observer.takeRecords().flatMap((record) => [...record.removedNodes]);
+    observer.disconnect();
+    expect(detached).not.toContain(host);
 
     expect(list).toHaveBeenCalledOnce();
     const overview = expectDefined(el.querySelector<HTMLElement>('.abyss-projects-table'));
@@ -516,6 +522,13 @@ describe('ProjectsPanel dispatch', () => {
 
     expect(list).toHaveBeenCalledTimes(2);
     expect(el.querySelector('.abyss-projects-table')).toBe(overview);
+
+    const name = expectDefined(
+      overview.querySelector<HTMLElement>('.abyss-project-table-name-cell'),
+    );
+    name.focus();
+    state.set('projectsPanel', { view: 'table' });
+    expect(activeDocument.activeElement).toBe(name);
   });
 
   it('renders the dashboard when projectsPanel is dashboard', () => {

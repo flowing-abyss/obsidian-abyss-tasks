@@ -741,6 +741,8 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     for (let pass = 0; pass < 2; pass++) {
       const window = this.#viewport.window(top, this.#viewportHeight(), pinned);
       const mounted = this.#reconcileWindow(body, model, window.segments);
+      // Retained rows now have this model. A height correction only changes which rows mount.
+      this.#rowsDirty = false;
       const correction = this.#viewport.measure(
         mounted.map(({ key, element }) => ({
           key,
@@ -759,7 +761,6 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
         this.#viewport.window(top, this.#viewportHeight(), pinned).segments,
       );
     if (top !== this.scroll.scrollTop) this.scroll.scrollTop = top;
-    this.#rowsDirty = false;
     this.#context.windowRendered();
   }
 

@@ -580,6 +580,35 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('[data-project-path="Projects/P0005.md"]')).not.toBeNull();
   });
 
+  it('reuses the rendered cell content while row measurement expands the window', () => {
+    const { host, projects, view } = largeTable();
+    const first = expectDefined(projects[0]);
+    const row = expectDefined(host.querySelector('[data-project-path="Projects/P0000.md"]'));
+    const originalCount = host.querySelectorAll('.abyss-project-table-row').length;
+    let measurements = 0;
+    let readsAfterMeasurement = 0;
+    const frontmatter = {
+      get description() {
+        if (measurements > 0) readsAfterMeasurement++;
+        return 'Updated description';
+      },
+    };
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === row) measurements++;
+      return rectangle(0, 0, 1000, this.classList.contains('abyss-project-table-row') ? 16 : 0);
+    });
+
+    view.update([{ ...first, name: 'A revised project', frontmatter }, ...projects.slice(1)]);
+
+    expect(measurements).toBeGreaterThan(1);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeGreaterThan(originalCount);
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).toBe(row);
+    expect(row.querySelector('.abyss-project-table-name')?.textContent).toBe('A revised project');
+    expect(readsAfterMeasurement).toBe(0);
+  });
+
   it('renders a bounded window and reveals later project rows on scroll', () => {
     const { host, scroll } = largeTable();
     expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
