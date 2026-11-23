@@ -24,7 +24,7 @@ import type { PanelNavigationActions } from '../../views/panelNavigation';
 
 export interface TagNavigationHost {
   render(): void;
-  appendCustomDot(parent: HTMLElement, selection: ListSelection): void;
+  appendListLabel(parent: HTMLElement, text: string, selection: ListSelection): void;
   draggedCenterNode(): TaskNodeSnapshot | undefined;
   assignTagFromInbox(task: TaskNodeSnapshot, tag: string): Promise<void>;
 }
@@ -93,8 +93,7 @@ export class TagNavigation {
       cls: `abyss-left-item abyss-pinned-tag${isActive ? ' is-active' : ''}`,
     });
     row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
-      l.createSpan({ cls: 'abyss-left-label', text: tag });
-      this.#host.appendCustomDot(l, { type: 'tag', tag });
+      this.#host.appendListLabel(l, tag, { type: 'tag', tag });
     });
     if (count > 0) row.createSpan({ cls: 'abyss-left-count', text: String(count) });
 
@@ -133,8 +132,7 @@ export class TagNavigation {
         const dot = l.createSpan({ cls: 'abyss-group-dot' });
         dot.style.background = group.color;
       }
-      l.createSpan({ cls: 'abyss-left-label', text: group.name });
-      this.#host.appendCustomDot(l, { type: 'tag', tag });
+      this.#host.appendListLabel(l, group.name, { type: 'tag', tag });
     });
     if (count > 0) row.createSpan({ cls: 'abyss-left-count', text: String(count) });
 
@@ -215,8 +213,7 @@ export class TagNavigation {
       const dot = header.createSpan({ cls: 'abyss-group-dot' });
       dot.style.background = group.color;
     }
-    header.createSpan({ cls: 'abyss-left-label', text: group.name });
-    this.#host.appendCustomDot(header, { type: 'group', groupId: group.id });
+    this.#host.appendListLabel(header, group.name, { type: 'group', groupId: group.id });
 
     const groupCount = countNodes({ type: 'group', groupId: group.id });
     if (groupCount > 0) {
@@ -269,8 +266,7 @@ export class TagNavigation {
       cls: `abyss-left-item abyss-tag-child${isActive ? ' is-active' : ''}`,
     });
     child.createDiv({ cls: 'abyss-left-item-left' }, (left) => {
-      left.createSpan({ cls: 'abyss-left-label', text: label });
-      this.#host.appendCustomDot(left, { type: 'tag', tag });
+      this.#host.appendListLabel(left, label, { type: 'tag', tag });
     });
     if (count > 0) child.createSpan({ cls: 'abyss-left-count', text: String(count) });
     child.addEventListener('click', (event) => {

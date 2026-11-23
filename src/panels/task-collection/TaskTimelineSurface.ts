@@ -295,6 +295,9 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   reveal(key: string): HTMLElement | undefined;
   reveal(key: string, options: { readonly waitForReady: true }): RevealResult;
   reveal(key: string, options?: { readonly waitForReady: true }): RevealResult {
+    // A reveal can mount rows between native scrolling and the scheduled calendar update.
+    if (!this.#destroyed && !this.#suspended && this.options.scroll.scrollLeft !== this.#lastLeft)
+      this.#calendar();
     const result =
       options === undefined ? this.#viewport.reveal(key) : this.#viewport.reveal(key, options);
     const task = this.rows.task(key);

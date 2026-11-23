@@ -1,6 +1,5 @@
 import { Menu, Notice, setIcon, type App, type TFile } from 'obsidian';
 import type { AppState, ListSelection } from '../app/AppState';
-import { isListViewCustomized, resolveListViewStateKey } from '../app/listViewState';
 import { moment } from '../obsidianMoment';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
@@ -31,6 +30,7 @@ import { changeProjectStatus, openProjectNote } from '../ui/projectActions';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
+import { ListNavigationLabels } from './left/ListNavigationLabels';
 import { TagNavigation } from './left/TagNavigation';
 import type { StatisticsNavigationPort } from './statistics/StatisticsNavigation';
 
@@ -104,6 +104,7 @@ export class LeftPanel {
   private readonly inlineAddSessions_abyssPrivate = new Set<InlineAddSession>();
   // Advanced by every full render, so a failed create can tell whether one ran while it was pending.
   private renderCount_abyssPrivate = 0;
+  readonly #listLabels: ListNavigationLabels;
   private readonly tagNavigation_abyssPrivate: TagNavigation;
   private readonly navigation_abyssPrivate: PanelNavigationActions;
 
@@ -140,6 +141,7 @@ export class LeftPanel {
         },
         onSaveViewState,
       );
+    this.#listLabels = new ListNavigationLabels(settings);
     this.tagNavigation_abyssPrivate = new TagNavigation({
       state,
       settings,
@@ -152,8 +154,8 @@ export class LeftPanel {
         render: () => {
           this.render_abyssPrivate();
         },
-        appendCustomDot: (parent, selection) => {
-          this.appendCustomDot_abyssPrivate(parent, selection);
+        appendListLabel: (parent, text, selection) => {
+          this.#listLabels.append(parent, text, selection);
         },
         draggedCenterNode: () => {
           const payload = this.state_abyssPrivate.get('draggingTaskNode');
@@ -168,13 +170,8 @@ export class LeftPanel {
     this.el_abyssPrivate = container;
     this.offs_abyssPrivate.push(
       this.state_abyssPrivate.onCommit((changed) => {
-        if (
-          changed.has('selectedList') ||
-          changed.has('mode') ||
-          changed.has('centerListViewState')
-        ) {
-          this.render_abyssPrivate();
-        }
+        if (changed.has('selectedList') || changed.has('mode')) this.render_abyssPrivate();
+        else if (changed.has('centerListViewState')) this.#listLabels.refresh(this.el_abyssPrivate);
       }),
     );
     const statistics = this.options_abyssPrivate.statisticsNavigation;
@@ -231,23 +228,6 @@ export class LeftPanel {
       f();
     });
     this.el_abyssPrivate.empty();
-  }
-
-  /** Append the "customized" dot after a container label when its saved view
-   *  state differs from defaults (group/sort/show changed or any filter set). */
-  private appendCustomDot_abyssPrivate(labelParent: HTMLElement, sel: ListSelection): void {
-    const key = resolveListViewStateKey(
-      sel,
-      this.settings_abyssPrivate.listViewStates,
-      new Set(this.settings_abyssPrivate.tagGroups.map((g) => g.id)),
-    );
-    const vs = this.settings_abyssPrivate.listViewStates?.[key];
-    if (vs != null && isListViewCustomized(vs, key)) {
-      labelParent.createSpan({
-        cls: 'abyss-left-custom-dot',
-        attr: { role: 'img', 'aria-label': 'Custom view applied' },
-      });
-    }
   }
 
   private render_abyssPrivate(): void {
@@ -589,8 +569,7 @@ export class LeftPanel {
         if (status?.color !== undefined && status.color !== '') {
           dot.style.background = status.color;
         }
-        l.createSpan({ cls: 'abyss-left-label', text: project.name });
-        this.appendCustomDot_abyssPrivate(l, { type: 'project', path: project.path });
+        this.#listLabels.append(l, project.name, { type: 'project', path: project.path });
       });
       this.attachProjectDropZone_abyssPrivate(row, project.path);
       this.attachProjectDragSource_abyssPrivate(row, project.path);
@@ -909,8 +888,7 @@ export class LeftPanel {
     const left = row.createDiv({ cls: 'abyss-left-item-left' });
     const iconEl = left.createSpan({ cls: 'abyss-left-icon' });
     setIcon(iconEl, icon);
-    left.createSpan({ cls: 'abyss-left-label', text: label });
-    this.appendCustomDot_abyssPrivate(left, selection);
+    this.#listLabels.append(left, label, selection);
 
     if (typeof count === 'string' ? count !== '0' : count > 0) {
       row.createSpan({

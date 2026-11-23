@@ -2191,6 +2191,21 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     };
   }
 
+  it('keeps navigation rows and counts when only the collection view changes', () => {
+    const h = makeFull({
+      tasks: [task({ tags: ['#work'] })],
+      settings: { pinnedTags: ['#work'] },
+    });
+    const row = expectDefined(h.el.querySelector('.abyss-pinned-tag'));
+    h.taskList.mockClear();
+    h.projectList.mockClear();
+    h.state.set('centerListViewState', { ...h.state.get('centerListViewState'), view: 'kanban' });
+    expect(h.taskList).not.toHaveBeenCalled();
+    expect(h.projectList).not.toHaveBeenCalled();
+    expect(h.el.querySelector('.abyss-pinned-tag')).toBe(row);
+    h.panel.destroy();
+  });
+
   it('renders visible Tasks once for a batched commit and once for a standalone relevant change', () => {
     const { state, el, taskList } = makeFull({
       tasks: [task({ tags: ['#work'] })],

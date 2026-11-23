@@ -629,6 +629,27 @@ it.each(['commit', 'cancel'] as const)(
   },
 );
 
+it('reveals a virtual row at the current calendar position before the scroll frame runs', () => {
+  const h = continuousTimeline(900, { scheduled: localDate('2027-04-08') }, undefined, 5000);
+  try {
+    const saved = h.surface.captureScroll();
+    if (saved.center === 'today') throw new Error('Expected a measured calendar center');
+    const day = (projectCalendarDayOrdinal('2027-04-08') as number) + 0.5;
+    h.host.scrollLeft += (day - saved.center) * saved.viewport.dayWidth;
+    h.host.dispatchEvent(new Event('scroll'));
+    const card = expectDefined(h.surface.reveal('row:4900'));
+    const marker = expectDefined(
+      card
+        .closest('.abyss-task-timeline-row')
+        ?.querySelector<HTMLButtonElement>('.abyss-project-timeline-state'),
+    );
+    expect(h.surface.captureScroll().center).toBeCloseTo(day, 6);
+    expect(marker.hidden).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+
 it('positions only the row markers from the applied scroll offset, including newly mounted rows', () => {
   const h = continuousTimeline(900, {}, undefined, 5000);
   let left = 100.375;
