@@ -728,7 +728,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       todayDay: localDay(this.actions.now()),
       overscanCells: 1,
     });
-    patchTimelineGrid(this.#grid, this.#axisLayout);
+    patchTimelineGrid(this.#grid, this.#axisLayout, trackWidth);
     this.#patchCalendarHeading();
     this.#patchMountedCalendar(changed, todayChanged);
   }

@@ -28,34 +28,35 @@ it('shares one correctly positioned one-pixel grid across tracks and adopted doc
   const first = mountTimelineGrid(host.createDiv(), grid);
   const second = mountTimelineGrid(host.createDiv(), grid);
   const layout = slice('2024-02-25', '2024-03-06');
-  patchTimelineGrid(grid, layout);
+  const width = 731.25;
+  patchTimelineGrid(grid, layout, width);
   expect(grid.id).not.toBe(siblingGrid.id);
   expect(first.getAttribute('href')).toBe(`#${grid.id}`);
   expect(second.getAttribute('href')).toBe(first.getAttribute('href'));
   expect(new Set(layout.gridBoundaries.map(({ weight }) => weight))).toEqual(
     new Set(['minor', 'major']),
   );
-  expect(
-    [...grid.children].map((rect) => [
-      rect.getAttribute('data-day'),
-      rect.getAttribute('x'),
-      rect.getAttribute('width'),
-      rect.getAttribute('height'),
-      rect.getAttribute('class'),
-    ]),
-  ).toEqual(
-    layout.gridBoundaries.map((line) => [
-      line.day,
-      `${line.leftPercent}%`,
-      '1',
-      '100%',
-      `abyss-project-timeline-gridline is-${line.weight}`,
-    ]),
-  );
+  expect(grid.childElementCount).toBe(2);
+  expect(grid.getAttribute('viewBox')).toBe(`0 0 ${width} 1`);
+  expect(grid.getAttribute('preserveAspectRatio')).toBe('none');
+  for (const weight of ['minor', 'major'] as const) {
+    const path = grid.querySelector(`path.abyss-project-timeline-gridline.is-${weight}`);
+    const expected = layout.gridBoundaries.filter((line) => line.weight === weight);
+    expect(path?.getAttribute('d')).toBe(
+      expected.map((line) => `M${(line.leftPercent * width) / 100} 0h1v1h-1Z`).join(''),
+    );
+    const resized = width * 2;
+    patchTimelineGrid(grid, layout, resized);
+    expect(grid.querySelector(`path.is-${weight}`)).toBe(path);
+    expect(path?.getAttribute('d')).toBe(
+      expected.map((line) => `M${(line.leftPercent * resized) / 100} 0h1v1h-1Z`).join(''),
+    );
+    patchTimelineGrid(grid, layout, width);
+  }
   const target = document.implementation.createHTMLDocument('Popout');
   target.body.append(host);
   expect(target.getElementById(first.getAttribute('href')?.slice(1) ?? '')).toBe(grid);
-  patchTimelineGrid(grid, { ...layout, gridBoundaries: [] });
+  patchTimelineGrid(grid, { ...layout, gridBoundaries: [] }, width);
   expect(grid.childElementCount).toBe(0);
 });
 

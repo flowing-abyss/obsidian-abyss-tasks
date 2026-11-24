@@ -844,7 +844,7 @@ export class ProjectsTimelineView<
       overscanCells: 1,
       todayDay: today,
     });
-    patchTimelineGrid(this.grid_abyssPrivate, layout);
+    patchTimelineGrid(this.grid_abyssPrivate, layout, this.viewport_abyssPrivate.trackWidth);
     this.axisRange_abyssPrivate.setText(`${visible.visibleStartDay} – ${visible.visibleEndDay}`);
     patchTimelineAxisCells(
       this.axisHierarchy_abyssPrivate,

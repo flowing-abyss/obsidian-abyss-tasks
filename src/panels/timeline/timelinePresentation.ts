@@ -111,7 +111,10 @@ export function createTimelineGrid(axis: HTMLElement): SVGSymbolElement {
   });
   return source.createSvg('symbol', {
     cls: 'abyss-project-timeline-grid-definition',
-    attr: { id: `abyss-timeline-grid-${axis.win.crypto.randomUUID()}` },
+    attr: {
+      id: `abyss-timeline-grid-${axis.win.crypto.randomUUID()}`,
+      preserveAspectRatio: 'none',
+    },
   });
 }
 
@@ -124,17 +127,28 @@ export function mountTimelineGrid(track: HTMLElement, grid: SVGSymbolElement): S
     .createSvg('use', { attr: { href: `#${grid.id}`, width: '100%', height: '100%' } });
 }
 
-export function patchTimelineGrid(grid: SVGSymbolElement, layout: ProjectTimelineAxisLayout): void {
-  const boundaries = layout.gridBoundaries;
-  while (grid.childElementCount > boundaries.length) grid.lastElementChild?.remove();
-  for (const [index, boundary] of boundaries.entries()) {
-    const line =
-      grid.children.item(index) ?? grid.createSvg('rect', { attr: { width: '1', height: '100%' } });
-    const x = `${boundary.leftPercent}%`;
-    if (line.getAttribute('x') !== x) line.setAttribute('x', x);
-    if (line.getAttribute('data-day') !== boundary.day) line.setAttribute('data-day', boundary.day);
-    const className = `abyss-project-timeline-gridline is-${boundary.weight}`;
-    if (line.getAttribute('class') !== className) line.setAttribute('class', className);
+export function patchTimelineGrid(
+  grid: SVGSymbolElement,
+  layout: ProjectTimelineAxisLayout,
+  trackWidth: number,
+): void {
+  const viewBox = `0 0 ${trackWidth} 1`;
+  if (grid.getAttribute('viewBox') !== viewBox) grid.setAttribute('viewBox', viewBox);
+  // Each row instantiates the symbol. Group the one-pixel strips by their theme color.
+  const strips = { minor: '', major: '' };
+  for (const { leftPercent, weight } of layout.gridBoundaries) {
+    strips[weight] += `M${(leftPercent * trackWidth) / 100} 0h1v1h-1Z`;
+  }
+  for (const weight of ['minor', 'major'] as const) {
+    const existing = grid.querySelector(`path.is-${weight}`);
+    if (strips[weight] === '') {
+      existing?.remove();
+      continue;
+    }
+    const path =
+      existing ??
+      grid.createSvg('path', { attr: { class: `abyss-project-timeline-gridline is-${weight}` } });
+    if (path.getAttribute('d') !== strips[weight]) path.setAttribute('d', strips[weight]);
   }
 }
 

@@ -383,7 +383,11 @@ it('reuses the calendar grid while mounting new rows on a vertical fling', () =>
     const definition = expectDefined(
       h.host.querySelector('symbol.abyss-project-timeline-grid-definition'),
     );
-    const positions = () => [...definition.children].map((line) => line.getAttribute('x'));
+    const width = Number.parseFloat(
+      h.host.style.getPropertyValue('--abyss-project-timeline-track-width'),
+    );
+    expect(definition.getAttribute('viewBox')).toBe(`0 0 ${width} 1`);
+    const positions = () => [...definition.children].map((line) => line.getAttribute('d'));
     const expected = positions();
     expect(expected.length).toBeGreaterThan(0);
     expect(grid().querySelector('use')?.getAttribute('href')).toBe(`#${definition.id}`);

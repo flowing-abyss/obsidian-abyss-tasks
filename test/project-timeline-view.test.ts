@@ -22,8 +22,14 @@ function gridLinePositions(host: HTMLElement): string[] {
   const grid = expectDefined(host.querySelector('symbol.abyss-project-timeline-grid-definition'));
   for (const use of host.querySelectorAll('.abyss-project-timeline-grid > use'))
     expect(use.getAttribute('href')).toBe(`#${grid.id}`);
-  return [...grid.querySelectorAll('rect')].map((rect) =>
-    serializedPercent(Number.parseFloat(expectDefined(rect.getAttribute('x')))),
+  const width = Number(expectDefined(grid.getAttribute('viewBox')).split(' ')[2]);
+  const root = expectDefined(grid.closest<HTMLElement>('.abyss-project-timeline'));
+  expect(root.style.getPropertyValue('--abyss-project-timeline-track-width')).toBe(`${width}px`);
+  return [...grid.querySelectorAll('path')].flatMap((path) =>
+    expectDefined(path.getAttribute('d'))
+      .split('M')
+      .slice(1)
+      .map((strip) => serializedPercent((Number.parseFloat(strip) / width) * 100)),
   );
 }
 
