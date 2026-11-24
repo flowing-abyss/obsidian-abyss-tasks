@@ -1768,7 +1768,7 @@ it('invalidates offscreen font measurements through the actual font completion e
   expect(h.scroll.scrollTop).toBe(4320);
 });
 
-it.each(['open', 'closed'] as const)(
+it.each(['open', 'hidden', 'closed'] as const)(
   'recalibrates unseen rows and preserves their anchor when fonts load while the list is %s',
   (state) => {
     let h = harness(false, true, false, { scrollReservePx: 'timeline' });
@@ -1791,6 +1791,7 @@ it.each(['open', 'closed'] as const)(
       const saved = h.surface.captureScroll();
       expect(saved.anchor).toMatchObject({ key: 'n.md:100', offset: 0.25 });
       if (state === 'closed') h.surface.destroy();
+      if (state === 'hidden') h.size(600, 0);
 
       // A new webfont changes wrapping without changing the computed CSS font family.
       const loading = deferred<FontFaceSet>();
@@ -1810,6 +1811,10 @@ it.each(['open', 'closed'] as const)(
       }
       for (let i = 0; i < 300; i++) h.heights.set(`n.md:${i}`, 64);
       if (state === 'closed') h.surface.update(data, sampled);
+      if (state === 'hidden') {
+        h.size(600, 480);
+        h.resize();
+      }
       h.frame();
       expect(h.scroll.scrollHeight).toBe(19200);
       expect(h.scroll.scrollTop).toBe(6400.25);

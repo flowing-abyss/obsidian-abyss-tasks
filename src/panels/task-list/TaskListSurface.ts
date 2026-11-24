@@ -20,7 +20,12 @@ import {
 import { bindTaskListTouch } from '../virtualization/taskListTouch';
 import { bindTimelineWheel } from '../virtualization/timelineWheel';
 import { isLargeScrollStep, onVerticalScrollIntent } from '../virtualization/verticalScrollIntent';
-import { retainHeightSample, sampleTaskHeights, type TaskHeightSample } from './taskHeightSample';
+import {
+  fontLoadId,
+  retainHeightSample,
+  sampleTaskHeights,
+  type TaskHeightSample,
+} from './taskHeightSample';
 import { indexedRows, type TaskListRow, type TaskListRows } from './taskListRows';
 import type { MountedTaskListRows } from './taskListRowView';
 
@@ -225,6 +230,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #width = -1;
   #rowVariant: string | undefined;
   #font = '';
+  #fontLoad: number | undefined;
   #focusedKey: string | undefined;
   #ordered: string[] = [];
   #pendingScroll: TaskListScroll | undefined;
@@ -837,6 +843,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const fontChanged = (): void => {
       if (generation !== this.#nativeGeneration) return;
       this.#font = '';
+      this.#fontLoad = undefined;
       schedule();
     };
     this.#observer = new owner.ResizeObserver(schedule);
@@ -1097,6 +1104,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#observer = undefined;
     this.#nativeCleanup?.();
     this.#nativeCleanup = undefined;
+    this.#fontLoad = undefined;
     this.#owner = null;
   }
   #evict(key: string, mount: TaskRowMount<T>): void {
@@ -1412,7 +1420,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const sample = sampleTaskHeights(this.#rows, measurements, previous, {
       width: this.#width,
       font: this.#font,
-      fonts: this.#options.host.ownerDocument.fonts,
+      fontLoad: this.#loadedFontId(),
       variant: this.#rowVariant,
       top,
     });
@@ -1422,6 +1430,12 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const anchor = retainedAnchor ?? this.#viewport.captureAnchor(top);
     this.#replace();
     return this.#viewport.restoreAnchor(anchor, top);
+  }
+  #loadedFontId(): number | undefined {
+    const fonts = this.#options.host.ownerDocument.fonts;
+    // Reading ready can flush layout. Reuse it until a font load completes or the owner changes.
+    this.#fontLoad ??= fontLoadId(fonts.ready);
+    return fonts.status === 'loading' ? undefined : this.#fontLoad;
   }
   #measureRows(current: () => boolean): RowMeasurement[] | undefined {
     if (!this.#admitReconciliation(current)) return;

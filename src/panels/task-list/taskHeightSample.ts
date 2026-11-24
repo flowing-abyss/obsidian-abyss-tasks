@@ -15,7 +15,7 @@ let nextFontLoad = 1;
 
 // Each font loading cycle has a new ready promise. A saved sample can recognize it
 // after reopening without retaining the document that supplied the fonts.
-function fontLoadId(ready: Promise<FontFaceSet> | undefined): number {
+export function fontLoadId(ready: Promise<FontFaceSet> | undefined): number {
   if (ready === undefined) return 0;
   const known = fontLoads.get(ready);
   if (known !== undefined) return known;
@@ -35,7 +35,7 @@ export function retainHeightSample<T>(
 interface SampleLayout {
   readonly width: number;
   readonly font: string;
-  readonly fonts: FontFaceSet;
+  readonly fontLoad: number | undefined;
   readonly variant?: string | undefined;
   readonly top: number;
 }
@@ -56,9 +56,8 @@ export function sampleTaskHeights<T>(
   previous: TaskHeightSample | undefined,
   layout: SampleLayout,
 ): TaskHeightSample | undefined {
-  const { width, font, fonts, variant } = layout;
-  if (width <= 0 || fonts.status === 'loading') return;
-  const fontLoad = fontLoadId(fonts.ready);
+  const { width, font, fontLoad, variant } = layout;
+  if (width <= 0 || fontLoad === undefined) return;
   if (previous?.fontLoad === fontLoad && canReuseSample(previous, layout)) return;
   const tasks = measurements.filter(
     ({ key, height }) => rows.indexOf(key) >= 0 && Number.isFinite(height) && height > 0,
