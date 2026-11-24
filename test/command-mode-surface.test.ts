@@ -184,13 +184,30 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
+function captureInputName(input: HTMLInputElement | HTMLTextAreaElement): string | null {
+  const id = expectDefined(input.getAttribute('aria-labelledby'));
+  return expectDefined(input.ownerDocument.getElementById(id)).textContent;
+}
+it('keeps the input named without an Obsidian hover tooltip when switching capture modes', async () => {
+  const h = await setup();
+  h.memory.active = false;
+  const surface = h.mount();
+  const toggle = expectDefined(
+    surface.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]'),
+  );
+  for (const active of [false, true, false]) {
+    if (toggle.getAttribute('aria-pressed') !== String(active)) toggle.click();
+    expect(captureInputName(surface.input)).toBe(active ? 'Command' : 'Add task');
+    expect(surface.input.hasAttribute('aria-label')).toBe(false);
+  }
+});
 it('localizes fixed Russian chrome while preserving the exact agent and user text', async () => {
   configureCommandLocale('ru');
   const h = await setup();
   const surface = h.mount();
   await flushMicrotasks();
   expect(surface.element.querySelector('[aria-label="История"]')).not.toBeNull();
-  expect(surface.input.getAttribute('aria-label')).toBe('Команда');
+  expect(captureInputName(surface.input)).toBe('Команда');
   h.owner.setInput('Ready for review.');
   h.session.status('ready', 'Model supplied English phrase.');
   expect(surface.input.value).toBe('Ready for review.');
@@ -503,7 +520,7 @@ it('hides unavailable agent and voice controls without opening the command owner
     surface.element.querySelector<HTMLButtonElement>('[aria-label="Microphone"]')?.hidden,
   ).toBe(true);
   expect(h.resolveOwner).not.toHaveBeenCalled();
-  expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+  expect(captureInputName(surface.input)).toBe('Add task');
   expect(surface.element.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.hidden).toBe(
     false,
   );
@@ -4189,7 +4206,7 @@ it("retains another surface's exact draft when held voice recognition finishes",
   other.input.value = '  Unsent text from the other Q  ';
   other.input.dispatchEvent(new Event('input', { bubbles: true }));
   expect(h.closeCount()).toBe(0);
-  expect(origin.input.getAttribute('aria-label')).toBe('Command');
+  expect(captureInputName(origin.input)).toBe('Command');
   result.resolve('Spoken command');
   await flushMicrotasks(0);
   expect(origin.input.value).toBe('  Unsent text from the other Q  \n\nSpoken command');
@@ -5021,7 +5038,7 @@ it('transcribes in ordinary Q without an agent connection or switching capture m
     expect(surface.input.value).toBe('Ordinary dictation');
   });
   expect(h.memory.active).toBe(false);
-  expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+  expect(captureInputName(surface.input)).toBe('Add task');
   expect(h.owner.snapshot().exchanges).toHaveLength(0);
   expect(await h.read('a.md')).toBe('- [ ] Existing\n');
 });
@@ -5316,7 +5333,7 @@ it.each(['stop and edit', 'one-click send'] as const)(
       { available: () => {}, transcribe: () => transcript.promise },
       () => connections.availability({ voice: 'openai', provider: 'disabled' }),
     );
-    expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+    expect(captureInputName(surface.input)).toBe('Add task');
     const mic = voiceButton(surface);
     expect(mic.hidden).toBe(false);
     expect(voiceButton(surface, 'CommandMode').hidden).toBe(true);
@@ -5609,7 +5626,7 @@ it('restores ordinary capture when retained command mode loses its provider', as
   const h = await setup();
   h.owner.setInput('Retained command draft');
   const surface = h.mount(undefined, () => ({ agent: false, voice: false }));
-  expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+  expect(captureInputName(surface.input)).toBe('Add task');
   expect(h.memory.active).toBe(false);
   expect(
     surface.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]')?.hidden,
@@ -5674,7 +5691,7 @@ it.each(['command toggle', 'history'] as const)(
     if (route === 'command toggle') voiceButton(surface, 'CommandMode').click();
     else expectDefined(historyRows(openHistory(surface))[0]).click();
     await vi.advanceTimersByTimeAsync(0);
-    expect(surface.input.getAttribute('aria-label')).toBe('Command');
+    expect(captureInputName(surface.input)).toBe('Command');
     expect(signal?.aborted).toBe(true);
     transcript.resolve('Old quick capture');
     await vi.advanceTimersByTimeAsync(0);
@@ -5724,7 +5741,7 @@ it('closes open history if the LLM is disconnected before a row is selected', as
   await flushMicrotasks(0);
   expect(popup.isConnected).toBe(false);
   expect(h.owner.snapshot().id).toBe(current);
-  expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+  expect(captureInputName(surface.input)).toBe('Add task');
 });
 
 it('reopens the discarded task tree from history without reviving its changes or writing the vault', async () => {
@@ -6490,7 +6507,7 @@ it.each(['listening', 'recognizing', 'work', 'open during work'])(
       undefined,
       otherHost,
     );
-    expect(other.input.getAttribute('aria-label')).toBe('Add task');
+    expect(captureInputName(other.input)).toBe('Add task');
     voiceButton(other).click();
     await vi.advanceTimersByTimeAsync(0);
     expect(childMedia.getUserMedia).not.toHaveBeenCalled();
@@ -6507,8 +6524,7 @@ it.each(['listening', 'recognizing', 'work', 'open during work'])(
     await vi.advanceTimersByTimeAsync(300);
     expect(media.tracks[media.tracks.length - 1]?.readyState).toBe('live');
     voiceButton(origin).click();
-    if (other.input.getAttribute('aria-label') === 'Command')
-      voiceButton(other, 'CommandMode').click();
+    if (captureInputName(other.input) === 'Command') voiceButton(other, 'CommandMode').click();
     voiceButton(other).click();
     await vi.advanceTimersByTimeAsync(0);
     expect(childMedia.getUserMedia).toHaveBeenCalledOnce();
@@ -7067,7 +7083,7 @@ it('a sibling ordinary toggle cannot reroute a visibly command Send into task ca
   expectDefined(
     first.element.querySelector<HTMLButtonElement>('[aria-label="CommandMode"]'),
   ).click();
-  expect(second.input.getAttribute('aria-label')).toBe('Command');
+  expect(captureInputName(second.input)).toBe('Command');
   expect(second.element.classList.contains('abyss-capture-surface--command')).toBe(true);
   expectDefined(second.element.querySelector<HTMLButtonElement>('[aria-label="Send"]')).click();
   await flushMicrotasks(0);

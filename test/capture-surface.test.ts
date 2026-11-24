@@ -136,7 +136,9 @@ describe('CaptureSurface', () => {
     expect(positioningHost.firstElementChild).toBe(surface.element);
     expect(destination.textContent).toBe('Inbox · #inbox');
     expect(surface.input.placeholder).toBe('Task name…');
-    expect(surface.input.getAttribute('aria-label')).toBe('Add task');
+    const name = expectDefined(surface.input.getAttribute('aria-labelledby'));
+    expect(surface.element.querySelector(`#${name}`)?.textContent).toBe('Add task');
+    expect(surface.input.hasAttribute('aria-label')).toBe(false);
     expect(surface.input.readOnly).toBe(false);
     expect(surface.input.getAttribute('aria-busy')).toBe('false');
     expect(surface.input.getAttribute('aria-invalid')).toBe('false');

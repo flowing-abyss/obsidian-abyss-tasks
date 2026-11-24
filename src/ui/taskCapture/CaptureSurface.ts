@@ -1,4 +1,5 @@
 import type { App } from 'obsidian';
+import { createControlName, writeText } from '../guardedDomWrites';
 import { isImeOwnedEvent } from '../ime';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
@@ -29,6 +30,7 @@ export interface CaptureExtensionHost {
   readonly element: HTMLElement;
   readonly shell: HTMLElement;
   readonly input: HTMLTextAreaElement | HTMLInputElement;
+  readonly setInputLabel: (label: string) => void;
   readonly registerSurface: (surface: HTMLElement) => () => void;
   readonly refresh: () => void;
   readonly submitOrdinary: (cause?: 'voice') => void;
@@ -96,7 +98,7 @@ export class CaptureSurface {
       this.presentation_abyssPrivate === 'inline',
     );
 
-    const { shell, input } = this.createInput_abyssPrivate(options);
+    const { shell, input, setInputLabel } = this.createInput_abyssPrivate(options);
     this.input = input;
 
     this.destination_abyssPrivate = this.element.createSpan();
@@ -125,6 +127,7 @@ export class CaptureSurface {
       element: this.element,
       shell,
       input: this.input,
+      setInputLabel,
       registerSurface: (surface) => this.boundary_abyssPrivate?.register(surface) ?? (() => {}),
       refresh: () => {
         this.render_abyssPrivate(this.controller_abyssPrivate.snapshot());
@@ -151,7 +154,7 @@ export class CaptureSurface {
 
   private createInput_abyssPrivate(
     options: CaptureSurfaceOptions,
-  ): Pick<CaptureExtensionHost, 'shell' | 'input'> {
+  ): Pick<CaptureExtensionHost, 'shell' | 'input' | 'setInputLabel'> {
     const shell =
       options.extend === undefined
         ? this.element
@@ -162,9 +165,13 @@ export class CaptureSurface {
         : shell.createEl('textarea', { attr: { enterkeyhint: 'enter', rows: '1' } });
     input.className = 'abyss-capture-input abyss-quick-capture-input';
     input.placeholder = options.placeholder ?? 'Task name…';
-    input.setAttribute('aria-label', options.inputLabel ?? 'Add task');
-
-    return { shell, input };
+    // Obsidian turns aria-label on a hovered input into a visible tooltip.
+    const name = createControlName(input, shell);
+    const setInputLabel = (label: string): void => {
+      writeText(name, label);
+    };
+    setInputLabel(options.inputLabel ?? 'Add task');
+    return { shell, input, setInputLabel };
   }
   private commandActive_abyssPrivate(): boolean {
     return this.extension_abyssPrivate?.active() === true;

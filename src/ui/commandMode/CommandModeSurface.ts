@@ -407,12 +407,12 @@ export class CommandModeSurface implements CaptureExtension {
         this.owner.hide(this.visibility),
         commandMessage('Could not retain command session'),
       );
-    this.capture.input.setAttribute('aria-label', commandMessage('Add task'));
+    this.capture.setInputLabel(commandMessage('Add task'));
     this.capture.input.placeholder = commandMessage('Task name…');
     this.setPrimary('send', false);
   }
   private restoreCommandInput_abyssPrivate(): void {
-    this.capture.input.setAttribute('aria-label', commandMessage('Command'));
+    this.capture.setInputLabel(commandMessage('Command'));
     this.capture.input.placeholder = commandMessage('What would you like to do?');
     this.capture.input.readOnly = false;
     this.capture.input.setAttribute('aria-describedby', this.phase.id);
