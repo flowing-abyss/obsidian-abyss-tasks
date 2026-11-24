@@ -179,6 +179,25 @@ it.each([false, true])('does not replan 60 unchanged stationary frames (clamped=
   expect(h.calls()).toBe(1);
   expect(h.markerTop()).toBe('40px');
 });
+it('keeps the mounted preview intact while the pointer stays over the same insertion', () => {
+  const h = frameDrag();
+  const marker = h.scroll.querySelector('.abyss-project-kanban-insertion-line');
+  expect(marker).not.toBeNull();
+  const observer = new MutationObserver(() => {});
+  observer.observe(h.root, { attributes: true, childList: true, subtree: true });
+  try {
+    h.frame();
+    h.drag('dragover');
+    h.frame();
+    expect(h.scroll.querySelector('.abyss-project-kanban-insertion-line')).toBe(marker);
+    expect(observer.takeRecords()).toHaveLength(0);
+    marker?.remove();
+    h.frame();
+    expect(h.markerTop()).toBe('40px');
+  } finally {
+    observer.disconnect();
+  }
+});
 it('refreshes live marker geometry while preserving the unchanged semantic plan', () => {
   const h = frameDrag();
   h.setTop(95);

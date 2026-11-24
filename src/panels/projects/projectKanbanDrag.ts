@@ -11,6 +11,11 @@ import type { KanbanViewportRow } from './projectKanbanRows';
 
 const PROJECT_KANBAN_DRAG_TYPE = 'application/x-abyss-project-kanban-card';
 
+interface InsertionLocation {
+  readonly lineHost: HTMLElement;
+  readonly lineTop: number;
+}
+
 export interface ProjectKanbanDragAdapter {
   readonly hitTest: (
     clientX: number,
@@ -20,7 +25,7 @@ export interface ProjectKanbanDragAdapter {
   readonly insertionLocation: (
     target: Element,
     plan: AllowedDropPlan,
-  ) => { lineHost: HTMLElement; lineTop: number } | undefined;
+  ) => InsertionLocation | undefined;
   readonly pin: (card: HTMLElement) => () => void;
   readonly begin: () => () => void;
   readonly capture: (card: HTMLElement) => ProjectKanbanDropSource;
@@ -50,8 +55,26 @@ interface ProvisionalGesture {
 }
 
 interface ActivePreview {
-  readonly elements: readonly HTMLElement[];
-  readonly line?: HTMLElement;
+  readonly zone: HTMLElement;
+  readonly allowed: boolean;
+  readonly message: string;
+  readonly line: HTMLElement | undefined;
+  readonly lineTop: number | undefined;
+}
+
+function matchesPreview(
+  preview: ActivePreview | undefined,
+  zone: HTMLElement,
+  plan: ProjectKanbanDropPlan,
+  location: InsertionLocation | undefined,
+): boolean {
+  return (
+    preview?.zone === zone &&
+    preview.allowed === plan.allowed &&
+    preview.message === plan.message &&
+    preview.lineTop === location?.lineTop &&
+    preview.line?.parentElement === location?.lineHost
+  );
 }
 
 type AllowedDropPlan = Extract<ProjectKanbanDropPlan, { allowed: true }>;
@@ -509,7 +532,6 @@ export class ProjectKanbanDragController {
   }
 
   private showPlan_abyssPrivate(target: Element, plan: ProjectKanbanDropPlan): void {
-    this.clearPreview_abyssPrivate();
     const group = target.closest<HTMLElement>(
       '.abyss-project-kanban-group, .abyss-project-kanban-hover-group',
     );
@@ -517,34 +539,48 @@ export class ProjectKanbanDragController {
       '.abyss-project-kanban-column, .abyss-project-kanban-hover-preview',
     );
     const zone = group ?? column;
-    if (zone === null) return;
+    if (zone === null) {
+      this.clearPreview_abyssPrivate();
+      return;
+    }
+    const location = this.insertionLocation_abyssPrivate(target, column, plan);
+    if (matchesPreview(this.preview_abyssPrivate, zone, plan, location)) return;
+    this.clearPreview_abyssPrivate();
     zone.addClass(plan.allowed ? 'is-drop-target' : 'is-drop-disabled');
     setTooltip(zone, plan.message);
-    let line: HTMLElement | undefined;
-    if (plan.allowed && plan.insertion.kind !== 'none') {
-      const location =
-        column?.classList.contains('abyss-project-kanban-hover-preview') === true
-          ? this.hoverInsertionLocation_abyssPrivate(plan)
-          : this.adapter_abyssPrivate.insertionLocation(target, plan);
-      if (location !== undefined) {
-        line = location.lineHost.createDiv({ cls: 'abyss-project-kanban-insertion-line' });
-        line.setCssProps({
-          '--abyss-project-kanban-insertion-top': `${Math.max(0, location.lineTop)}px`,
-        });
-      }
-    }
-    this.preview_abyssPrivate = { elements: [zone], ...(line === undefined ? {} : { line }) };
+    const line = location?.lineHost.createDiv({ cls: 'abyss-project-kanban-insertion-line' });
+    if (line !== undefined && location !== undefined)
+      line.setCssProps({
+        '--abyss-project-kanban-insertion-top': `${Math.max(0, location.lineTop)}px`,
+      });
+    this.preview_abyssPrivate = {
+      zone,
+      allowed: plan.allowed,
+      message: plan.message,
+      line,
+      lineTop: location?.lineTop,
+    };
+  }
+
+  private insertionLocation_abyssPrivate(
+    target: Element,
+    column: HTMLElement | null,
+    plan: ProjectKanbanDropPlan,
+  ): InsertionLocation | undefined {
+    if (!plan.allowed || plan.insertion.kind === 'none') return;
+    return column?.classList.contains('abyss-project-kanban-hover-preview') === true
+      ? this.hoverInsertionLocation_abyssPrivate(plan)
+      : this.adapter_abyssPrivate.insertionLocation(target, plan);
   }
 
   private clearPreview_abyssPrivate(): void {
     const preview = this.preview_abyssPrivate;
+    if (preview === undefined) return;
     this.preview_abyssPrivate = undefined;
-    for (const element of preview?.elements ?? []) {
-      element.removeClass('is-drop-target', 'is-drop-disabled');
-      setTooltip(element, '');
-      element.removeAttribute('aria-label');
-    }
-    preview?.line?.remove();
+    preview.zone.removeClass('is-drop-target', 'is-drop-disabled');
+    setTooltip(preview.zone, '');
+    preview.zone.removeAttribute('aria-label');
+    preview.line?.remove();
   }
 
   private scheduleOverlay_abyssPrivate(column: HTMLElement, plan: ProjectKanbanDropPlan): void {
@@ -784,7 +820,7 @@ export class ProjectKanbanDragController {
   }
   private hoverInsertionLocation_abyssPrivate(
     plan: AllowedDropPlan,
-  ): { lineHost: HTMLElement; lineTop: number } | undefined {
+  ): InsertionLocation | undefined {
     const host = this.hoverContent_abyssPrivate;
     const top = this.hoverViewport_abyssPrivate?.insertionTop(
       plan.insertion,
