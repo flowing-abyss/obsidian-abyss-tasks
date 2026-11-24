@@ -1069,7 +1069,7 @@ describe('windowed Tasks integration', () => {
     const { el, state, panel } = makeCenter(largeTasks());
     const first = expectDefined(cards(el)[0]);
     const firstKey = expectDefined(first.dataset['rowKey']);
-    const mountBound = taskCardMountBound(el);
+    const mountBound = taskCardMountBound(el, 0, 400);
     click(first);
     for (let i = 0; i < mountBound; i++) key(el, 'ArrowDown', { shiftKey: true });
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe(

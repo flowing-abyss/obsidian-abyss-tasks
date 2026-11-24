@@ -20,6 +20,7 @@ import {
   writeOptionalAttribute,
   writeText,
 } from '../../ui/guardedDomWrites';
+import type { RowSegment } from '../virtualization/rowViewport';
 import type { ProjectGroupDropForecast } from './projectGroupDropPreview';
 import {
   NO_PROJECT_OVERVIEW_CELLS,
@@ -29,6 +30,7 @@ import {
   type ProjectOverviewFieldResolver,
   type ProjectTableRow,
 } from './projectOverviewCells';
+import { ProjectScrollReserve, sameProjectWindow } from './projectScrollReserve';
 import {
   cellContaining,
   nearestViewportDelta,
@@ -243,6 +245,8 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   readonly #context: ProjectsTableSurfaceContext;
   readonly #host: HTMLElement;
   #columnCleanup: (() => void) | undefined;
+  #renderedSegments: readonly RowSegment[] | undefined;
+  readonly #reserve = new ProjectScrollReserve();
   readonly #viewport = new ProjectTableViewport();
   #spacers = new Map<string, HTMLTableRowElement>();
   #rowsDirty = false;
@@ -278,7 +282,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
       cls: 'abyss-project-table-scroll',
       attr: { tabindex: '-1' },
     });
-    this.scroll.addEventListener('scroll', this.#renderWindow);
+    this.scroll.addEventListener('scroll', this.#onScroll, { passive: true });
     this.#host = this.scroll.createDiv({
       cls: 'abyss-project-table-host',
     });
@@ -498,6 +502,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     if (owner === this.#owner) return;
     this.#unbind();
     this.#owner = owner;
+    this.#reserve.reset(this.scroll.scrollTop);
     if (owner === null) return;
     const fonts = Reflect.get(owner.document, 'fonts') as FontFaceSet | undefined;
     const generation = this.#generation;
@@ -518,16 +523,24 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     };
     owner.addEventListener('resize', schedule);
     fonts?.addEventListener('loadingdone', fontChanged);
+    const clearIntent = this.#reserve.listen(this.scroll, schedule);
     this.#nativeCleanup = () => {
+      clearIntent();
       owner.removeEventListener('resize', schedule);
       fonts?.removeEventListener('loadingdone', fontChanged);
     };
     const Observer = Reflect.get(owner, 'ResizeObserver') as ResizeObserverConstructor | undefined;
     if (Observer !== undefined) {
       this.#resizeObserver = new Observer(schedule);
-      this.#resizeObserver.observe(this.scroll);
-      if (this.#table !== undefined) this.#resizeObserver.observe(this.#table);
+      this.#observeTable(this.#resizeObserver);
     }
+  }
+
+  #observeTable(observer: ResizeObserver): void {
+    observer.observe(this.scroll);
+    if (this.#table !== undefined) observer.observe(this.#table);
+    for (const { element } of this.#renderedProjectRows.values()) observer.observe(element);
+    for (const { element } of this.#renderedGroupRows.values()) observer.observe(element);
   }
 
   #unbind(): void {
@@ -587,6 +600,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   #replaceGeometry(): void {
+    this.#renderedSegments = undefined;
     this.#viewport.replace(
       this.#rows.map(({ key, project }) => ({ key, height: project === undefined ? 32 : 34 })),
       String(this.#layoutRevision),
@@ -594,7 +608,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   #destroyViewport(): void {
-    this.scroll.removeEventListener('scroll', this.#renderWindow);
+    this.scroll.removeEventListener('scroll', this.#onScroll);
     this.#removeMissingRows(new Set(), new Set());
     this.#model = undefined;
     this.#rows = [];
@@ -702,6 +716,13 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     return height > 0 ? Math.max(1, height - headerHeight) : 0;
   }
 
+  readonly #onScroll = (): void => {
+    this.#reserve.onScroll(this.scroll);
+    this.#guard(() => {
+      this.#renderVisible(this.scroll.scrollTop, this.scroll.clientWidth, true);
+    });
+  };
+
   readonly #renderWindow = (): void => {
     this.#guard(() => {
       this.#renderVisible(this.scroll.scrollTop);
@@ -726,7 +747,11 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     return pending.scrollTop;
   }
 
-  #renderVisible(requestedTop: number, availableWidth = this.scroll.clientWidth): void {
+  #renderVisible(
+    requestedTop: number,
+    availableWidth = this.scroll.clientWidth,
+    nativeScroll = false,
+  ): void {
     const body = this.#body;
     const model = this.#model;
     if (!this.#canRender(availableWidth) || body === undefined || model === undefined) {
@@ -735,12 +760,37 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     }
     this.#bind();
     const pinned = this.#pinnedRows();
-    let top = this.#checkLayout(this.#resumeViewport(requestedTop), availableWidth);
-    let extentChanged = false;
+    const top = this.#checkLayout(this.#resumeViewport(requestedTop), availableWidth);
+    const initial = this.#viewport.window(top, this.#viewportHeight(), pinned, this.#reserve.mode);
+    if (this.#canReuseScrollWindow(nativeScroll && requestedTop === top, initial.segments)) return;
+    const corrected = this.#renderMeasuredRows(body, model, pinned, {
+      top,
+      segments: initial.segments,
+    });
+    if (corrected !== this.scroll.scrollTop) this.scroll.scrollTop = corrected;
+    this.#context.windowRendered();
+  }
+
+  #canReuseScrollWindow(nativeScroll: boolean, segments: readonly RowSegment[]): boolean {
+    return (
+      nativeScroll &&
+      this.#activeRowDrag === undefined &&
+      this.#resizeObserver !== undefined &&
+      !this.#rowsDirty &&
+      sameProjectWindow(this.#renderedSegments, segments)
+    );
+  }
+
+  #renderMeasuredRows(
+    body: HTMLTableSectionElement,
+    model: ProjectTableModel,
+    pinned: readonly string[],
+    initial: { top: number; segments: readonly RowSegment[] },
+  ): number {
+    let { top, segments } = initial;
     // Extent is reconciled before a real correction; ordinary native scroll is never normalized.
     for (let pass = 0; pass < 2; pass++) {
-      const window = this.#viewport.window(top, this.#viewportHeight(), pinned);
-      const mounted = this.#reconcileWindow(body, model, window.segments);
+      const mounted = this.#reconcileWindow(body, model, segments);
       // Retained rows now have this model. A height correction only changes which rows mount.
       this.#rowsDirty = false;
       const correction = this.#viewport.measure(
@@ -750,18 +800,17 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
         })),
         Math.max(0, top),
       );
-      extentChanged = correction.changed;
-      if (!correction.changed) break;
+      if (!correction.changed) return top;
       top += correction.scrollTop - Math.max(0, top);
+      segments = this.#viewport.window(
+        top,
+        this.#viewportHeight(),
+        pinned,
+        this.#reserve.mode,
+      ).segments;
     }
-    if (extentChanged)
-      this.#reconcileWindow(
-        body,
-        model,
-        this.#viewport.window(top, this.#viewportHeight(), pinned).segments,
-      );
-    if (top !== this.scroll.scrollTop) this.scroll.scrollTop = top;
-    this.#context.windowRendered();
+    this.#reconcileWindow(body, model, segments);
+    return top;
   }
 
   #reconcileWindow(
@@ -803,6 +852,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     this.#reconcileRowOrder(body, rows.desired);
     this.#spacers = spacers;
     this.#renderedCells = rows.cells;
+    this.#renderedSegments = segments;
 
     return mounted;
   }
@@ -907,7 +957,9 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     const existing = this.#renderedGroupRows.get(key);
     const rendered = existing ?? this.#createGroupRow(options);
     try {
-      return this.#patchGroupRow(rendered, options);
+      const row = this.#patchGroupRow(rendered, options);
+      if (existing === undefined) this.#resizeObserver?.observe(row);
+      return row;
     } catch (error) {
       rendered.contentSignature = '';
       if (existing === undefined) {
@@ -1005,6 +1057,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   ): void {
     for (const [key, rendered] of this.#renderedProjectRows) {
       if (retainedProjects.has(key)) continue;
+      this.#resizeObserver?.unobserve(rendered.element);
       rendered.dragCleanup?.();
       this.#context.markdown.removeChild(rendered.markdown);
       rendered.element.remove();
@@ -1012,6 +1065,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     }
     for (const [key, rendered] of this.#renderedGroupRows) {
       if (retainedGroups.has(key)) continue;
+      this.#resizeObserver?.unobserve(rendered.element);
       this.#context.markdown.removeChild(rendered.markdown);
       rendered.element.remove();
       this.#renderedGroupRows.delete(key);
@@ -1090,6 +1144,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
       writeOptionalAttribute(row, 'data-group-key', group.key);
       if (row.draggable !== grouped) row.draggable = grouped;
       this.#reconcileProjectCells(renderedRow, options, occurrenceId);
+      if (existing === undefined) this.#resizeObserver?.observe(row);
       return renderedRow;
     } catch (error) {
       if (existing === undefined) {

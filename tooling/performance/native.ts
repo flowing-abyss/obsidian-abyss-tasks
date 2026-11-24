@@ -28,6 +28,7 @@ import {
   taskTimelineScenarios,
   type Measure,
 } from './native-scenarios.ts';
+import type { RecordScroll } from './native-scroll.ts';
 import type { Host, NativeBridge, NativeOptions } from './native-types.ts';
 import { AbyssProfiler, bounded, PendingWork } from './profiler.ts';
 import { FIXTURE_FOLDER, type Sample } from './types.ts';
@@ -241,8 +242,40 @@ async function completeCalendarSample(context: MeasurementContext, sample: Sampl
   }
 }
 
-async function captureTaskBoard(context: MeasurementContext, id: string): Promise<void> {
-  if (!context.diagnostic || id !== 'ui.tasks.kanban') return;
+async function captureScroll(context: MeasurementContext, id: string): Promise<void> {
+  if (!context.diagnostic) return;
+  if (
+    id.endsWith('.reversal') ||
+    ['ui.inspector.dependencies', 'ui.projects.table', 'ui.projects.kanban'].includes(id)
+  ) {
+    context.bridge.save(`${id}-dom.json`, {
+      html: element('.abyss-panel-view').outerHTML,
+      viewport: context.viewport,
+    });
+    await context.cdp?.screenshot(id);
+  }
+}
+
+async function captureTaskCollection(context: MeasurementContext, id: string): Promise<void> {
+  if (!context.diagnostic) return;
+  if (id === 'ui.tasks.list-scroll') {
+    const list = element('.abyss-center .abyss-task-list-surface');
+    context.bridge.save('task-list-dom.json', { viewport: context.viewport, html: list.outerHTML });
+    await context.cdp?.screenshot('task-list');
+    return;
+  }
+  if (id === 'ui.tasks.list-scroll-inspector') {
+    const inspector = element('.abyss-right-title-view');
+    const card = element('.abyss-center .abyss-task-card.is-selected');
+    context.bridge.save('scrolled-inspector-dom.json', {
+      rowKey: card.dataset['rowKey'],
+      title: inspector.textContent,
+      focused: card.contains(activeDocument.activeElement),
+    });
+    await context.cdp?.screenshot('scrolled-inspector');
+    return;
+  }
+  if (id !== 'ui.tasks.kanban') return;
   const board = element('.abyss-task-kanban');
   context.bridge.save('task-kanban-dom.json', {
     mounted: board.querySelectorAll('.abyss-task-card').length,
@@ -315,7 +348,8 @@ export function createMeasure(context: MeasurementContext): Measure {
       );
       assertViewport(context.viewport);
       await completeCalendarSample(context, sample);
-      await captureTaskBoard(context, id);
+      await captureTaskCollection(context, id);
+      await captureScroll(context, id);
       await captureTimeline(context, id);
       samples.push(sample);
       bridge.save(diagnostic ? 'diagnostic-samples.json' : `iteration-${iteration}.json`, samples);
@@ -405,7 +439,7 @@ export function install(host: Host, bridge: NativeBridge, options: NativeOptions
       await featureScenarios(host, options, measure, { bridge, diagnostic, iteration, hidden });
     } else if (options.api === true) await apiScenarios(host, options, measure);
     else if (!options.startup)
-      await suite(host, options, measure, { cdp: resources.get('cdp'), bridge });
+      await suite(host, options, measure, { cdp: resources.get('cdp'), bridge, iteration });
     const cdp = resources.get('cdp');
     if (cdp !== undefined) {
       await cdp.stop();
@@ -456,16 +490,32 @@ async function suite(
   host: Host,
   options: NativeOptions,
   measure: Measure,
-  diagnostics: { cdp: NativeCdp | undefined; bridge: NativeBridge },
+  diagnostics: { cdp: NativeCdp | undefined; bridge: NativeBridge; iteration: number },
 ): Promise<void> {
   const { cdp, bridge } = diagnostics;
   await queryScenarios(host, options, measure);
   await cdp?.memory('search-ready');
   await panelScenarios(host, measure);
   await calendarScenarios(measure);
-  await taskBoardScenarios(host, measure);
-  await taskTimelineScenarios(host, measure);
-  await projectScenarios(measure);
+  const record: RecordScroll = (view, observation) => {
+    bridge.save(
+      `scroll-${view}-${cdp === undefined ? diagnostics.iteration : 'diagnostic'}.json`,
+      observation,
+    );
+  };
+  await taskBoardScenarios(
+    host,
+    measure,
+    (uncovered) => {
+      bridge.save(
+        `task-list-scroll-${cdp === undefined ? diagnostics.iteration : 'diagnostic'}.json`,
+        uncovered,
+      );
+    },
+    record,
+  );
+  await taskTimelineScenarios(host, measure, record);
+  await projectScenarios(measure, record);
   await statisticsScenarios(host, measure);
   await cdp?.memory('analysis-ready');
   if (cdp !== undefined)

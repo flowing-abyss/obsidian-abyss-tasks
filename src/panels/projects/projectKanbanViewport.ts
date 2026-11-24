@@ -7,6 +7,7 @@ import {
   type KanbanViewportRow,
   type PlannedKanbanInsertion,
 } from './projectKanbanRows';
+import { ProjectScrollReserve, sameProjectWindow } from './projectScrollReserve';
 
 export interface KanbanRowMount {
   readonly element: HTMLElement;
@@ -16,6 +17,7 @@ export interface KanbanRowMount {
 export interface ProjectKanbanColumnViewportOptions {
   readonly host: HTMLElement;
   readonly scroll: HTMLElement;
+  readonly dragging?: () => boolean;
   mount(host: HTMLElement, row: KanbanViewportRow, markdown: Component): KanbanRowMount;
   mountedChanged(): void;
   reportFailure(error: unknown): void;
@@ -24,6 +26,8 @@ export interface ProjectKanbanColumnViewportOptions {
 /** Owns only one column's native window; model and interaction authority remain in the view. */
 export class ProjectKanbanColumnViewport {
   readonly #options: ProjectKanbanColumnViewportOptions;
+  #renderedSegments: readonly RowSegment[] | undefined;
+  readonly #reserve = new ProjectScrollReserve();
   readonly #viewport = new RowViewport();
   #rows: readonly KanbanViewportRow[] = [];
   #rowIndex = new KanbanRowIndex([]);
@@ -35,6 +39,7 @@ export class ProjectKanbanColumnViewport {
   #window: Window | null = null;
   #observer: ResizeObserver | undefined;
   #frame: number | undefined;
+  #measureOnFrame = false;
   #generation = 0;
   #active = true;
   #retireIncoming = false;
@@ -73,6 +78,7 @@ export class ProjectKanbanColumnViewport {
   }
 
   #replace(): void {
+    this.#renderedSegments = undefined;
     this.#viewport.replace(
       this.#rows.map((row) => ({
         ...row,
@@ -211,7 +217,8 @@ export class ProjectKanbanColumnViewport {
   }
   #segments(top: number, pins: readonly string[]): readonly RowSegment[] {
     if (this.#active)
-      return this.#viewport.window(top, this.#options.scroll.clientHeight, pins).segments;
+      return this.#viewport.window(top, this.#options.scroll.clientHeight, pins, this.#reserve.mode)
+        .segments;
     const bounds = pins
       .flatMap((key) => {
         const row = this.#viewport.rowBounds(key);
@@ -263,6 +270,7 @@ export class ProjectKanbanColumnViewport {
     }
     this.#evictOutside(retained, spacerCount);
     this.#order(desired);
+    this.#renderedSegments = segments;
     this.#options.mountedChanged();
     if (this.#active && (mounted || update)) this.#schedule();
   }
@@ -349,7 +357,8 @@ export class ProjectKanbanColumnViewport {
     if (this.#window === owner) return;
     this.#unbind();
     this.#window = owner;
-    this.#options.scroll.addEventListener('scroll', this.#schedule, { passive: true });
+    this.#reserve.reset(this.#options.scroll.scrollTop);
+    this.#options.scroll.addEventListener('scroll', this.#onScroll, { passive: true });
     const fonts =
       owner === null
         ? undefined
@@ -365,7 +374,9 @@ export class ProjectKanbanColumnViewport {
     };
     owner?.addEventListener('resize', schedule);
     fonts?.addEventListener('loadingdone', fontChanged);
+    const clearIntent = this.#reserve.listen(this.#options.scroll, schedule);
     this.#nativeCleanup = () => {
+      clearIntent();
       owner?.removeEventListener('resize', schedule);
       fonts?.removeEventListener('loadingdone', fontChanged);
     };
@@ -378,15 +389,25 @@ export class ProjectKanbanColumnViewport {
   }
   #unbind(): void {
     this.#generation++;
+    this.#renderedSegments = undefined;
+    this.#measureOnFrame = false;
     if (this.#frame !== undefined) this.#window?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
-    this.#options.scroll.removeEventListener('scroll', this.#schedule);
+    this.#options.scroll.removeEventListener('scroll', this.#onScroll);
     this.#nativeCleanup?.();
     this.#nativeCleanup = undefined;
     this.#layoutDirty = true;
     this.#observer?.disconnect();
     this.#observer = undefined;
     this.#window = null;
+  }
+  #canReuseScrollWindow(top: number, anchor: RowAnchor | undefined, measure: boolean): boolean {
+    return (
+      !measure &&
+      this.#observer !== undefined &&
+      anchor === undefined &&
+      sameProjectWindow(this.#renderedSegments, this.#segments(top, this.#pinnedKeys()))
+    );
   }
   #measure(top: number, anchor?: RowAnchor): { scrollTop: number; changed: boolean } {
     const measured = this.#viewport.measure(
@@ -399,12 +420,20 @@ export class ProjectKanbanColumnViewport {
     );
     return { ...measured, scrollTop: top + measured.scrollTop - Math.max(0, top) };
   }
-  readonly #schedule = (): void => {
+  readonly #onScroll = (): void => {
+    const dragging = this.#options.dragging?.() === true;
+    if (!dragging) this.#reserve.onScroll(this.#options.scroll);
+    this.#schedule(!dragging);
+  };
+  readonly #schedule = (nativeScroll = false): void => {
+    if (!nativeScroll) this.#measureOnFrame = true;
     if (this.#frame !== undefined || !this.#active || this.#destroyed || this.#failed) return;
     const generation = this.#generation;
     this.#frame = this.#window?.requestAnimationFrame(() => {
       if (generation !== this.#generation || this.#destroyed || !this.#active) return;
       this.#frame = undefined;
+      const measure = this.#measureOnFrame;
+      this.#measureOnFrame = false;
       if (this.#failed) return;
       if (!this.#options.host.isConnected) {
         this.setActive(false);
@@ -414,6 +443,7 @@ export class ProjectKanbanColumnViewport {
         this.#bind();
         const nativeTop = this.#options.scroll.scrollTop;
         const { top, anchor } = this.#checkLayout(nativeTop);
+        if (this.#canReuseScrollWindow(top, anchor, measure)) return;
         const { scrollTop: corrected } = this.#measure(top, anchor);
         this.#render(corrected);
         if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;

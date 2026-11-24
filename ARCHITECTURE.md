@@ -148,10 +148,21 @@ Opening a menu on one task must still target that task if the inspector selectio
 [Menu tests](test/task-menus.test.ts) · [Inspector writer tests](test/right-panel-writers.test.ts) · [Inspector history tests](test/inspector-history-transitions.test.ts)
 
 **Collections and search.** List, Kanban, and Timeline share the task list surface and card
-interactions. Logical rows own order and selection. Only a window of those rows may have DOM
-elements. [TaskSearchService](src/tasks/infrastructure/search/TaskSearchService.ts) retrieves
-compact matches. The view asks it to resolve visible hits against the current index. Stale
-addresses are discarded.
+interactions. Logical rows own order and selection. Each view mounts full cards around the
+viewport. Timeline uses the same task cards and calendar tracks during scrolling and at rest.
+Screen-sized vertical wheel steps mount the destination window in the input handler. After the
+gesture pauses, small batches prepare neighboring cards. Android task summaries apply vertical
+swipes and their momentum on the same frame as the destination cards. Touching a row stops
+that motion before the tap is handled. Calendar tracks keep their range-edit gestures.
+Compact collections batch exact-source lookups and prioritize tasks in the viewport. The search service
+discards stale addresses. [TaskSearchService](src/tasks/infrastructure/search/TaskSearchService.ts)
+
+Task and project views share the row geometry for their vertical windows. Each scrolling
+surface owns its mounted rows, including any focused or pinned row. The inspector's dependency
+picker loads visible candidates before filling the surrounding window during scrolling. Selecting
+a loaded option rechecks its identity and eligibility against the current search session.
+[Row geometry](src/panels/virtualization/rowViewport.ts) · [Dependency picker tests](test/dependency-search.test.ts)
+
 Change text matching in [searchMatchPolicy](src/tasks/domain/searchMatchPolicy.ts), list membership
 in [taskNodeMembership](src/task-lists/taskNodeMembership.ts), and display in the
 [search surface](src/panels/center/TaskSearch.ts). Global search returns roots. A task-list

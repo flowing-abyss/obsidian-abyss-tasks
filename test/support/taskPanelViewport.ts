@@ -75,8 +75,8 @@ export function prepareTaskPanelViewport(el: HTMLElement, clampWrites = false): 
   });
 }
 
-/** Capacity from the fixture's measured cards, native viewport and existing 170px overscan. */
-export function taskCardMountBound(root: HTMLElement, pins = 0): number {
+/** Capacity from the fixture's measured cards, native viewport, overscan and optional list reserve. */
+export function taskCardMountBound(root: HTMLElement, pins = 0, scrollReservePx = 0): number {
   const scroll = root.querySelector<HTMLElement>('.abyss-center-scroll');
   const heights = [...root.querySelectorAll<HTMLElement>('.abyss-task-card')].map(
     (card) => card.getBoundingClientRect().height,
@@ -84,7 +84,11 @@ export function taskCardMountBound(root: HTMLElement, pins = 0): number {
   const minimum = Math.min(...heights);
   if (scroll === null || !Number.isFinite(minimum) || minimum <= 0)
     throw new Error('Expected positive native card/viewport geometry');
-  return Math.ceil((scroll.clientHeight + 2 * 170) / minimum) + 2 + pins;
+  const height = scroll.clientHeight;
+  const reserve =
+    scrollReservePx === 0 ? 0 : Math.max(scrollReservePx, Math.min(1600, 1.25 * height));
+  const refill = scrollReservePx === 0 ? 170 : Math.max(170, Math.min(900, 0.75 * height));
+  return Math.ceil((height + 2 * (reserve + refill)) / minimum) + 2 + pins;
 }
 
 function pixels(value: string): number {

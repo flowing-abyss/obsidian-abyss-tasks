@@ -216,6 +216,16 @@ describe('canonical profiler evaluation transport', () => {
     },
   );
 
+  it('allows the diagnostic trace to finish after the ordinary native deadline', async () => {
+    const result = evaluate('mutate(); await wait(); return 9;', 360000);
+    await waitForMutation();
+    now = 120001;
+    await delay(75);
+    release();
+    await expect(result).resolves.toBe(9);
+    await expectClean();
+  });
+
   it('bounds a missing completion and prevents a late success from recreating files', async () => {
     const result = evaluate('mutate(); await wait(); return 9;');
     const rejected = expect(result).rejects.toThrow(/timed out/iu);

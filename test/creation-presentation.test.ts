@@ -1244,6 +1244,10 @@ describe('asynchronous creation receipts', () => {
     target.remove();
     vi.spyOn(Date, 'now').mockReturnValue(start + 700);
     const next = renderIdentity(h.root, snapshot.ref);
+    const visibility = vi.fn(() => false);
+    h.controller.refreshMounted(h.root, visibility);
+    expect(next.classList.contains('is-just-created')).toBe(false);
+    expect(visibility).toHaveBeenCalledOnce();
     h.controller.refreshMounted(h.root);
     expect(next.classList.contains('is-just-created')).toBe(true);
     expect(reveal).toHaveBeenCalledTimes(1);

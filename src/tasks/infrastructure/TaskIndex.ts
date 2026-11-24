@@ -22,7 +22,7 @@ import type {
   TaskReadObservation,
   TaskReadScope,
 } from '../application/TaskIntegrationReadApi';
-import type { TaskReadProjectionApi } from '../application/TaskSearchApi';
+import { searchHydrationLimits, type TaskReadProjectionApi } from '../application/TaskSearchApi';
 import type {
   TaskSearchDocument,
   TaskSearchFileVersion,
@@ -1976,7 +1976,10 @@ export class TaskIndex
     signal: AbortSignal,
   ): Promise<readonly TaskSearchHydratedHit[]> {
     await this.awaitSearchReady_abyssPrivate(signal);
-    if (hits.length > 200 || new Set(hits.map((hit) => hit.address.rootId)).size > 50)
+    if (
+      hits.length > searchHydrationLimits.hits ||
+      new Set(hits.map((hit) => hit.address.rootId)).size > searchHydrationLimits.roots
+    )
       throw new TaskSearchError('invalid-request', 'Search batch too large');
     const roots = new Map<number, TaskSnapshot>();
     const output: TaskSearchHydratedHit[] = [];

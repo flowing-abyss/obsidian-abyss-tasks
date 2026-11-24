@@ -1,5 +1,6 @@
 import { Component } from 'obsidian';
 import { RowViewport, type RowAnchor, type RowSegment } from '../virtualization/rowViewport';
+import { ProjectScrollReserve, sameProjectWindow } from './projectScrollReserve';
 import type { TimelineViewportRow } from './projectTimelineRowModel';
 
 export interface TimelineRowMount {
@@ -19,6 +20,8 @@ export interface ProjectTimelineRowsOptions {
 /** Owns vertical geometry and mounted row lifetimes; the view owns calendar and source authority. */
 export class ProjectTimelineRows {
   readonly #options: ProjectTimelineRowsOptions;
+  #renderedSegments: readonly RowSegment[] | undefined;
+  readonly #reserve = new ProjectScrollReserve();
   readonly #viewport = new RowViewport();
   #rows: readonly TimelineViewportRow[] = [];
   readonly #mounts = new Map<string, { mount: TimelineRowMount; markdown: Component }>();
@@ -28,6 +31,7 @@ export class ProjectTimelineRows {
   #window: Window | null = null;
   #observer: ResizeObserver | undefined;
   #frame: number | undefined;
+  #measureOnFrame = false;
   #generation = 0;
   #active = true;
   #destroyed = false;
@@ -72,6 +76,7 @@ export class ProjectTimelineRows {
   }
 
   #replace(): void {
+    this.#renderedSegments = undefined;
     if (this.#metricsDirty) {
       this.#metricRevision++;
       this.#metricsDirty = false;
@@ -173,7 +178,7 @@ export class ProjectTimelineRows {
   }
   #segments(top: number, pins: readonly string[]): readonly RowSegment[] {
     if (this.#active && this.#options.host.isConnected && this.#height() > 0)
-      return this.#viewport.window(top, this.#height(), pins).segments;
+      return this.#viewport.window(top, this.#height(), pins, this.#reserve.mode).segments;
     const bounds = pins
       .flatMap((key) => {
         const row = this.#viewport.rowBounds(key);
@@ -225,6 +230,7 @@ export class ProjectTimelineRows {
     }
     this.#evictOutside(retained, spacerCount);
     this.#order(desired);
+    this.#renderedSegments = segments;
     this.#options.mountedChanged();
     if (this.#active && (mounted || update)) this.#schedule();
   }
@@ -323,8 +329,9 @@ export class ProjectTimelineRows {
     if (this.#window === owner) return;
     this.#unbind();
     this.#window = owner;
+    this.#reserve.reset(this.#options.scroll.scrollTop);
     if (owner === null) return;
-    this.#options.scroll.addEventListener('scroll', this.#schedule, { passive: true });
+    this.#options.scroll.addEventListener('scroll', this.#onScroll, { passive: true });
     const fonts = Reflect.get(owner.document, 'fonts') as FontFaceSet | undefined;
     const generation = this.#generation;
     const schedule = (): void => {
@@ -337,7 +344,9 @@ export class ProjectTimelineRows {
     };
     owner.addEventListener('resize', schedule);
     fonts?.addEventListener('loadingdone', fontChanged);
+    const clearIntent = this.#reserve.listen(this.#options.scroll, schedule);
     this.#nativeCleanup = () => {
+      clearIntent();
       owner.removeEventListener('resize', schedule);
       fonts?.removeEventListener('loadingdone', fontChanged);
     };
@@ -350,9 +359,11 @@ export class ProjectTimelineRows {
   }
   #unbind(): void {
     this.#generation++;
+    this.#renderedSegments = undefined;
+    this.#measureOnFrame = false;
     if (this.#frame !== undefined) this.#window?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
-    this.#options.scroll.removeEventListener('scroll', this.#schedule);
+    this.#options.scroll.removeEventListener('scroll', this.#onScroll);
     this.#nativeCleanup?.();
     this.#nativeCleanup = undefined;
     this.#metricsDirty = true;
@@ -361,7 +372,14 @@ export class ProjectTimelineRows {
     this.#window = null;
   }
   flush(): void {
-    if (this.#destroyed || !this.#active || this.#failed) return;
+    this.#flush(true);
+  }
+  #canFlush(): boolean {
+    return this.#active && !this.#destroyed && !this.#failed;
+  }
+  #flush(measure: boolean): void {
+    this.#measureOnFrame = false;
+    if (!this.#canFlush()) return;
     if (this.#frame !== undefined) this.#window?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
     try {
@@ -377,12 +395,21 @@ export class ProjectTimelineRows {
       }
       const nativeTop = this.#options.scroll.scrollTop;
       const { top, anchor } = this.#refreshMetrics(nativeTop);
+      if (this.#canReuseScrollWindow(top, anchor, measure)) return;
       const { scrollTop: corrected } = this.#measure(top, anchor);
       this.#render(corrected);
       if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;
     } catch (error) {
       this.#report(error);
     }
+  }
+  #canReuseScrollWindow(top: number, anchor: RowAnchor | undefined, measure: boolean): boolean {
+    return (
+      !measure &&
+      this.#observer !== undefined &&
+      anchor === undefined &&
+      sameProjectWindow(this.#renderedSegments, this.#segments(top, this.#pinnedKeys()))
+    );
   }
   #measure(top: number, anchor?: RowAnchor): { scrollTop: number; changed: boolean } {
     const measured = this.#viewport.measure(
@@ -395,8 +422,13 @@ export class ProjectTimelineRows {
     );
     return { ...measured, scrollTop: top + measured.scrollTop - Math.max(0, top) };
   }
-  readonly #schedule = (): void => {
-    if (!this.#active || this.#destroyed || this.#failed) return;
+  readonly #onScroll = (): void => {
+    this.#reserve.onScroll(this.#options.scroll);
+    this.#schedule(true);
+  };
+  readonly #schedule = (nativeScroll = false): void => {
+    if (!nativeScroll) this.#measureOnFrame = true;
+    if (!this.#canFlush()) return;
     if (!this.#options.host.isConnected || this.#height() <= 0) {
       this.flush();
       return;
@@ -406,7 +438,7 @@ export class ProjectTimelineRows {
     this.#frame = this.#window?.requestAnimationFrame(() => {
       if (generation !== this.#generation || this.#destroyed || !this.#active) return;
       this.#frame = undefined;
-      this.flush();
+      this.#flush(this.#measureOnFrame);
     });
   };
 }

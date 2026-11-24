@@ -119,6 +119,27 @@ function renderer(useListControls = false) {
     context: () => context,
   };
 }
+it('identifies text committed immediately and resets that signal on a Markdown update', async () => {
+  const h = renderer();
+  const pending = deferred<void>();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+    await pending.promise;
+    holder.textContent = text;
+  });
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(document.body, task({ title: 'Plain task' }), [], flags);
+  try {
+    expect(mount.committedSynchronously).toBe(true);
+    mount.update(task({ title: '**Formatted**' }), [], flags);
+    expect(mount.committedSynchronously).toBe(false);
+    pending.resolve();
+    expect(await mount.settled).toEqual({ type: 'ready' });
+  } finally {
+    pending.resolve();
+    mount.destroy();
+  }
+});
+
 it.each([
   { description: 'Summary\nDetails', displayed: 'Summary …' },
   { description: 'Summary\n  ', displayed: 'Summary' },
@@ -170,6 +191,37 @@ it('keeps the continuation cue visible when the canonical description starts wit
     expect(description.hidden).toBe(false);
     expect(description.textContent).toBe(' …');
     mount.destroy();
+  } finally {
+    source.close();
+    h.hostComponent.unload();
+  }
+});
+
+it('renders authored Obsidian highlights in the card title and description', async () => {
+  const source = await createCanonicalSearchHarness(
+    { 'highlight.md': '- [ ] Meet at ==20:00==\n  - > Bring ==notes==\n- [ ] Check x == y' },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const h = renderer();
+  const render = vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, el) => {
+    const [prefix, highlight] = text.split('==');
+    el.appendText(prefix ?? '');
+    el.createEl('mark', { text: highlight ?? '' });
+  });
+  const flags = { selected: false, showDelete: false };
+  try {
+    const [meeting, comparison] = source.index.list();
+    const mount = h.subject.mount(document.body, expectDefined(meeting), [], flags);
+    await mount.settled;
+    expect(mount.element.querySelector('.abyss-task-title mark')?.textContent).toBe('20:00');
+    expect(mount.element.querySelector('.abyss-task-desc mark')?.textContent).toBe('notes');
+    mount.destroy();
+    render.mockClear();
+    const plain = h.subject.mount(document.body, expectDefined(comparison), [], flags);
+    expect(plain.element.querySelector('.abyss-task-title')?.textContent).toBe('Check x == y');
+    expect(plain.committedSynchronously).toBe(true);
+    expect(render).not.toHaveBeenCalled();
+    plain.destroy();
   } finally {
     source.close();
     h.hostComponent.unload();

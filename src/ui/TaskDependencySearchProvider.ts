@@ -1,6 +1,7 @@
 import type { BrowserTaskScheduler } from '../browserTaskScheduler';
 import {
   TaskSearchError,
+  searchHydrationLimits,
   type DependencyDirection,
   type TaskDependencyEligibility,
   type TaskDependencyQueryApi,
@@ -285,18 +286,21 @@ class DependencySession implements TaskDependencySearchSession {
         rootCount = 0;
       };
       for (const group of roots.values()) {
-        if (batch.length + group.length > 200 || rootCount === 50) {
+        if (
+          batch.length + group.length > searchHydrationLimits.hits ||
+          rootCount === searchHydrationLimits.roots
+        ) {
           await project();
           await this.ports.scheduler.yield(requestSignal);
           this.#check(requestSignal);
         }
-        for (let start = 0; start < group.length; start += 200) {
+        for (let start = 0; start < group.length; start += searchHydrationLimits.hits) {
           if (start > 0) {
             await project();
             await this.ports.scheduler.yield(requestSignal);
             this.#check(requestSignal);
           }
-          batch.push(...group.slice(start, start + 200));
+          batch.push(...group.slice(start, start + searchHydrationLimits.hits));
           rootCount++;
         }
       }

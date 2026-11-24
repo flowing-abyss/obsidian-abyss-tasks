@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { timelineViewportRows } from '../src/panels/projects/projectTimelineRowModel';
 import { ProjectTimelineRows } from '../src/panels/projects/projectTimelineRows';
 import { expectDefined } from './helpers';
+import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 const owners: ProjectTimelineRows[] = [];
 afterEach(() => {
@@ -137,6 +138,40 @@ describe('Timeline vertical windows', () => {
     expect(scroll.scrollTop).toBeGreaterThan(87_000);
     release();
     expect(owner.element('r700')).toBeUndefined();
+  });
+  it('prepares Timeline rows on both sides after vertical movement alone', () => {
+    const { owner, scroll, frame } = fixture();
+    scroll.scrollLeft = 800;
+    scroll.dispatchEvent(new Event('scroll'));
+    frame();
+    expect(owner.element('r7')).toBeUndefined();
+    const pinned = expectDefined(owner.element('r0'));
+    pinned.focus();
+    scroll.scrollTop = 8032;
+    scroll.dispatchEvent(new Event('scroll'));
+    frame();
+    expect(owner.element('r107')?.isConnected).toBe(true);
+    scroll.scrollTop -= 280;
+    const target = expectDefined(owner.element('r96'));
+    scroll.dispatchEvent(new Event('scroll'));
+    frame();
+    expect(owner.element('r96')).toBe(target);
+    expect(document.activeElement).toBe(pinned);
+    expect(scroll.scrollLeft).toBe(800);
+  });
+  it('leaves measured rows alone during horizontal scroll while refreshing the calendar axis', () => {
+    const resources = recordVirtualSurfaceResources();
+    const { owner, scroll, frame, beforeWindow } = fixture();
+    const measurement = vi.spyOn(expectDefined(owner.element('r0')), 'getBoundingClientRect');
+    beforeWindow.mockClear();
+    scroll.scrollLeft += 300;
+    scroll.dispatchEvent(new Event('scroll'));
+    frame();
+    expect(beforeWindow).toHaveBeenCalledOnce();
+    expect(measurement).not.toHaveBeenCalled();
+    for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+    frame();
+    expect(measurement).toHaveBeenCalled();
   });
   it('does not write normalized fractional or elastic native offsets in executed scroll frames', () => {
     const { scroll, frame, beforeWindow } = fixture();

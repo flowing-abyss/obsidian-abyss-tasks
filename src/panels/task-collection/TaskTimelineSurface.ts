@@ -58,7 +58,6 @@ import {
   timelineRangeStateOffsets,
 } from '../timeline/timelinePresentation';
 import type { TaskCollectionSurface } from './TaskCollectionSurface';
-
 interface TaskTimelineSource extends TimelineRangeSource {
   readonly key: string;
   readonly task: TaskNodeSnapshot;
@@ -118,6 +117,7 @@ const scheduledSuffix = '\u0000scheduled';
 export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   readonly #viewport: TaskListSurface<T>;
   readonly #axis: HTMLElement;
+  readonly #gridTemplate: HTMLElement;
   readonly #contextOverlay: TimelineContextOverlay | undefined;
   readonly #summary: HTMLElement;
   readonly #dates: HTMLElement;
@@ -132,10 +132,12 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #owner: Window | null = null;
   #resize: ResizeObserver | undefined;
   #frame: number | undefined;
+  #calendarPending = false;
   #geometry: TimelineViewport;
   #usableWidth = 0;
   #lastLeft = 0;
   #stateOffsets = timelineRangeStateOffsets(0, 0);
+  #rowOffsets = this.#stateOffsets;
   #calendarSignature = '';
   #todayDay = '';
   #scale: ProjectTimelineScale;
@@ -177,14 +179,22 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       cls: 'abyss-project-timeline-axis-cells',
       attr: { 'aria-hidden': 'true' },
     });
+    this.#gridTemplate = options.host.ownerDocument.createElement('div');
+    this.#gridTemplate.className = 'abyss-project-timeline-grid';
+    this.#gridTemplate.setAttribute('aria-hidden', 'true');
     this.#contextOverlay = this.#mountContext();
     this.#rowsHost = options.host.createDiv({ cls: 'abyss-task-timeline-rows' });
-    this.#viewport = new TaskListSurface({
-      ...options,
-      host: this.#rowsHost,
-      viewportInset: () => this.#axis.getBoundingClientRect().height,
-      mount: (parent, row) => this.#mount(parent, row),
-    });
+    this.#viewport = new TaskListSurface(
+      {
+        ...options,
+        host: this.#rowsHost,
+        viewportInset: () => this.#axis.getBoundingClientRect().height,
+        viewportInsetElement: this.#axis,
+        beforeRowWrites: this.#sampleRowOffsets,
+        mount: (parent, row) => this.#mount(parent, row),
+      },
+      'timeline',
+    );
     this.#interaction = new TimelinePointerInteraction({
       root: this.#rowsHost,
       scroll: options.scroll,
@@ -263,6 +273,17 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   }
   mountedKeys(): readonly string[] {
     return this.#viewport.mountedKeys();
+  }
+  visibleMountedKeys(): string[] {
+    const scroll = this.options.scroll;
+    const top = this.#axis.getBoundingClientRect().bottom;
+    const bottom = scroll.getBoundingClientRect().top + scroll.clientTop + scroll.clientHeight;
+    const keys: string[] = [];
+    for (const [key, mount] of this.#mounts) {
+      const rect = mount.element.getBoundingClientRect();
+      if (rect.bottom > top && rect.top < bottom) keys.push(key);
+    }
+    return keys;
   }
   refreshMeasurements(): void {
     this.#viewport.refreshMeasurements();
@@ -448,10 +469,8 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       cls: 'abyss-project-timeline-track',
       attr: { tabindex: '0', 'data-timeline-part': 'track' },
     });
-    const grid = track.createDiv({
-      cls: 'abyss-project-timeline-grid',
-      attr: { 'aria-hidden': 'true' },
-    });
+    const grid = this.#gridTemplate.cloneNode(true) as HTMLElement;
+    track.appendChild(grid);
     const bar = track.createDiv({
       cls: 'abyss-project-timeline-bar',
       attr: { tabindex: '0', role: 'button', 'data-timeline-part': 'bar' },
@@ -486,7 +505,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#patch(mount);
     return {
       element,
-      measurementReady: () => card.measurementReady?.() ?? true,
+      measurementReady: (scrolling) => card.measurementReady?.(scrolling) ?? true,
       update: (next) => {
         if (next.kind === 'task') {
           mount.row = next;
@@ -547,7 +566,6 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #patch(mount: TimelineMount<T>): void {
     mount.element.toggleClass('is-done', this.actions.completed?.(mount.row.task) ?? false);
     const dates = taskTimelineDates(this.actions.planning(mount.row.task));
-    patchTimelineGrid(mount.grid, this.#axisLayout);
     patchTimelineToday(mount.track, this.#window(), this.actions.now());
     this.#patchBar(mount.bar, dates.range);
     mount.bar.setAttribute('aria-label', this.#rangeLabel(dates.range));
@@ -565,17 +583,25 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
         dates.range.kind !== 'unscheduled' &&
         dates.range.kind !== 'malformed',
     );
-    const left = this.options.scroll.scrollLeft;
-    let offsets = this.#stateOffsets;
-    if (left !== offsets.scrollLeft) {
-      // A reveal can mount a row between scroll events. Reconcile it even if scrolling
-      // returns to the previous frame's position without another event.
-      offsets = timelineRangeStateOffsets(left, this.#geometry.trackWidth - this.#usableWidth);
-      this.#calendarSignature = '';
-      this.#schedule();
-    }
-    this.#patchState(mount, dates, this.#visibleStart(left), offsets);
+    this.#patchState(
+      mount,
+      dates,
+      this.#visibleStart(this.#rowOffsets.scrollLeft),
+      this.#rowOffsets,
+    );
   }
+  readonly #sampleRowOffsets = (): void => {
+    const left = this.options.scroll.scrollLeft;
+    this.#rowOffsets = this.#stateOffsets;
+    if (left === this.#rowOffsets.scrollLeft) return;
+    // A reveal can publish between two native scroll events, including an away-and-back movement.
+    this.#rowOffsets = timelineRangeStateOffsets(
+      left,
+      this.#geometry.trackWidth - this.#usableWidth,
+    );
+    this.#calendarSignature = '';
+    this.#schedule();
+  };
   #patchState(
     mount: TimelineMount<T>,
     dates: ReturnType<typeof taskTimelineDates>,
@@ -707,6 +733,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       todayDay: localDay(this.actions.now()),
       overscanCells: 1,
     });
+    patchTimelineGrid(this.#gridTemplate, this.#axisLayout);
     this.#patchCalendarHeading();
     this.#patchMountedCalendar(changed, todayChanged);
   }
@@ -753,7 +780,9 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     }
   }
   #bind(): void {
-    const owner = this.options.host.ownerDocument.defaultView;
+    const doc = this.options.host.ownerDocument;
+    if (this.#gridTemplate.ownerDocument !== doc) doc.adoptNode(this.#gridTemplate);
+    const owner = doc.defaultView;
     if (owner === this.#owner) return;
     this.#cancelFrame();
     this.#resize?.disconnect();
@@ -766,21 +795,26 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     this.#resize.observe(this.#summary);
   }
   readonly #scroll = (): void => {
-    if (this.options.scroll.scrollLeft !== this.#lastLeft) this.#pendingCenter = undefined;
-    this.#schedule();
+    const horizontal = this.options.scroll.scrollLeft !== this.#lastLeft;
+    if (horizontal) this.#pendingCenter = undefined;
+    this.#schedule(horizontal || this.#todayDay !== localDay(this.actions.now()));
   };
-  readonly #schedule = (): void => {
-    if (this.#destroyed || this.#suspended || this.#owner === null || this.#frame !== undefined)
-      return;
+  readonly #schedule = (calendar = true): void => {
+    if (this.#destroyed || this.#suspended || this.#owner === null) return;
+    this.#calendarPending ||= calendar;
+    if (this.#frame !== undefined) return;
     this.#frame = this.#owner.requestAnimationFrame(() => {
       this.#frame = undefined;
+      const calendarPending = this.#calendarPending;
+      this.#calendarPending = false;
       if (!this.#destroyed && !this.#suspended) {
-        this.#calendar();
+        if (calendarPending) this.#calendar();
         this.#interaction.reconcileAfterRender();
       }
     });
   };
   #cancelFrame(): void {
+    this.#calendarPending = false;
     if (this.#frame !== undefined) this.#owner?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
   }

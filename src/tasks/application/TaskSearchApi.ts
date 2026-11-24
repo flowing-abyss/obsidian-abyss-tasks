@@ -7,6 +7,9 @@ import type {
 } from '../domain/taskSearchTypes';
 import type { TaskNodeRef } from '../domain/types';
 import type { TaskQueryApi } from './TaskApplicationApi';
+/** Exact-source hydration bounds apply to each resolveHits / resolveSearchHits request. */
+export const searchHydrationLimits = { hits: 200, roots: 50 } as const;
+
 export interface TaskReadProjectionApi extends Pick<TaskQueryApi, 'observedTags'> {
   /** Validate an already-owned exact node against an accepted compact address without hydration. */
   matchesSearchAddress(

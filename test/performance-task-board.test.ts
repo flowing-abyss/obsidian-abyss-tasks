@@ -2,9 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { taskBoardEvidence, waitFor } from '../tooling/performance/native-helpers';
 import type { Measure } from '../tooling/performance/native-scenarios';
 import * as scenarios from '../tooling/performance/native-scenarios';
+import type * as scrollScenarios from '../tooling/performance/native-scroll';
 import type { Host } from '../tooling/performance/native-types';
 import type { Sample } from '../tooling/performance/types';
 import { scenarioIds } from '../tooling/performance/types';
+
+// These tests move the horizontal date axis. Vertical hit-testing uses native layout.
+vi.mock('../tooling/performance/native-scroll', async (load) => ({
+  ...(await load<typeof scrollScenarios>()),
+  rapidScroll: vi.fn(),
+}));
 
 describe('native task board evidence', () => {
   it('requires the canonical population and ready, bounded column mounts', () => {
@@ -49,6 +56,7 @@ function timelineHarness(
   root.createEl('button', { cls: 'abyss-rail-btn', attr: { 'aria-label': 'Projects' } });
   const group = root.createDiv({ cls: 'abyss-tag-group-header' });
   group.createSpan({ cls: 'abyss-left-label', text: 'Profile' });
+  root.createEl('button', { cls: 'abyss-project-back' });
   const center = root.createDiv({ cls: 'abyss-center' });
   const receipt = center.createDiv();
   receipt.dataset['searchPhase'] = 'complete';
@@ -178,7 +186,7 @@ describe('native Timeline scenarios', () => {
       ?.addEventListener('click', () => controls.push('list'));
     h.button.addEventListener('click', () => controls.push('timeline'));
     try {
-      await scenarios.taskTimelineScenarios(h.host, h.measure);
+      await scenarios.taskTimelineScenarios(h.host, h.measure, vi.fn());
       expect(controls).toEqual(['profile', 'list', 'timeline']);
       expect(h.positions).toEqual([0, 28, 112, 56]);
       expect(h.navigation).toEqual(['month', 'today']);
@@ -194,7 +202,7 @@ describe('native Timeline scenarios', () => {
   it('uses the same finite horizontal workload for Projects Timeline', async () => {
     const h = timelineHarness('projects');
     try {
-      await scenarios.projectScenarios(h.measure);
+      await scenarios.projectScenarios(h.measure, vi.fn());
       expect(h.positions).toEqual([0, 28, 112, 56]);
       expect(h.preparations['ui.projects.timeline-scroll']).toEqual([0]);
       expect(h.samples['ui.projects.timeline-scroll']).toEqual({
@@ -211,8 +219,8 @@ describe('native Timeline scenarios', () => {
       const h = timelineHarness(kind, true, 'long');
       h.root.querySelector('.abyss-cal-nav-today')?.remove();
       try {
-        if (kind === 'tasks') await scenarios.taskTimelineScenarios(h.host, h.measure);
-        else await scenarios.projectScenarios(h.measure);
+        if (kind === 'tasks') await scenarios.taskTimelineScenarios(h.host, h.measure, vi.fn());
+        else await scenarios.projectScenarios(h.measure, vi.fn());
         expect(h.navigation).toEqual(['month', 'month']);
         expect(h.positions).toEqual([16384, 16398, 16440, 16412]);
         expect(h.samples[`ui.${kind}.timeline-scroll`]).toEqual({
@@ -229,7 +237,7 @@ describe('native Timeline scenarios', () => {
     h.date.remove();
     h.content.setAttribute('aria-busy', 'true');
     let settled = false;
-    const result = scenarios.taskTimelineScenarios(h.host, h.measure).then(() => {
+    const result = scenarios.taskTimelineScenarios(h.host, h.measure, vi.fn()).then(() => {
       settled = true;
     });
     try {
@@ -251,7 +259,7 @@ describe('native Timeline scenarios', () => {
       h.date.remove();
       h.content.inert = true;
     });
-    const result = scenarios.projectScenarios(h.measure);
+    const result = scenarios.projectScenarios(h.measure, vi.fn());
     try {
       await waitFor(() => h.positions.length === 2, 'first timed horizontal request');
       await new Promise((resolve) => window.setTimeout(resolve, 50));
@@ -276,8 +284,8 @@ describe('native Timeline scenarios', () => {
       for (const size of ['short', 'long'] as const) {
         const h = timelineHarness(kind, true, size);
         try {
-          if (kind === 'tasks') await scenarios.taskTimelineScenarios(h.host, h.measure);
-          else await scenarios.projectScenarios(h.measure);
+          if (kind === 'tasks') await scenarios.taskTimelineScenarios(h.host, h.measure, vi.fn());
+          else await scenarios.projectScenarios(h.measure, vi.fn());
           expect(h.positions).toEqual(
             size === 'short' ? [0, 28, 112, 56] : [16384, 16398, 16440, 16412],
           );
@@ -304,7 +312,7 @@ describe('native Timeline scenarios', () => {
       });
       return 1;
     });
-    const result = scenarios.projectScenarios(h.measure).then(
+    const result = scenarios.projectScenarios(h.measure, vi.fn()).then(
       () => 'accepted',
       (error: unknown) => String(error),
     );
@@ -340,7 +348,7 @@ describe('native Timeline scenarios', () => {
           h.scroller.createDiv({ cls: 'abyss-project-timeline-row', text: 'Unexpected row' });
       });
     try {
-      await expect(scenarios.projectScenarios(h.measure)).rejects.toThrow(
+      await expect(scenarios.projectScenarios(h.measure, vi.fn())).rejects.toThrow(
         {
           'no-range': 'horizontal range',
           'unchanged-offset': 'offset',

@@ -55,7 +55,26 @@ export interface RowWindow {
   readonly segments: readonly RowSegment[];
 }
 
+export type InteractiveBuffer = 'interactive' | 'search' | 'timeline';
+export type ScrollBuffer = 'initial' | 'scroll' | 'history' | 'timeline-seek' | InteractiveBuffer;
+
+function interactiveMargins(
+  buffer: InteractiveBuffer,
+  height: number,
+  visibleRows: number,
+): { reserve: number; keepRows: number; refillRows: number } {
+  if (buffer === 'timeline') {
+    // A vertical fling can advance one screen between paints. Leave room for explicit pins.
+    const extra = Math.max(0, Math.floor((76 - visibleRows) / 2));
+    return { reserve: height, keepRows: extra, refillRows: extra };
+  }
+  return buffer === 'search'
+    ? { reserve: 640, keepRows: 18, refillRows: 20 }
+    : { reserve: Math.min(600, height * 0.65), keepRows: 7, refillRows: 12 };
+}
+
 interface BufferedRange {
+  readonly buffer: ScrollBuffer;
   readonly start: number;
   readonly end: number;
   readonly height: number;
@@ -65,9 +84,12 @@ interface BufferedRange {
 export class RowViewport {
   readonly #geometry = new IndexedRowGeometry();
   #range: BufferedRange | undefined;
+  #seekTop: number | undefined;
   readonly #overscanPx: number;
+  readonly #scrollReservePx: number;
 
-  constructor(overscanPx = 170) {
+  constructor(overscanPx = 170, scrollReservePx = 0) {
+    this.#scrollReservePx = Number.isFinite(scrollReservePx) ? Math.max(0, scrollReservePx) : 0;
     this.#overscanPx = Number.isFinite(overscanPx) ? Math.max(0, overscanPx) : 170;
   }
 
@@ -77,6 +99,7 @@ export class RowViewport {
 
   replaceIndexed(source: RowViewportSource): void {
     this.#range = undefined;
+    this.#seekTop = undefined;
     this.#geometry.replace(source);
   }
 
@@ -101,12 +124,15 @@ export class RowViewport {
       retainedAnchor?.key ?? this.#bounds(anchor)?.key,
     );
     if (!changed) return { scrollTop, changed };
-    this.#range = undefined;
+    this.#invalidateMeasuredRange();
     const nextOffset =
       retainedAnchor === undefined
         ? this.#geometry.offset(anchor)
         : this.restoreAnchor(retainedAnchor, scrollTop);
     return { scrollTop: scrollTop + nextOffset - oldOffset, changed };
+  }
+  #invalidateMeasuredRange(): void {
+    if (this.#range?.buffer !== 'history' && this.#seekTop === undefined) this.#range = undefined;
   }
 
   rowBounds(key: string): RowBounds | undefined {
@@ -171,13 +197,19 @@ export class RowViewport {
     return Math.max(requestedTop, row.bottom - height);
   }
 
-  window(requestedTop: number, viewportHeight: number, pinned: readonly string[]): RowWindow {
+  window(
+    requestedTop: number,
+    viewportHeight: number,
+    pinned: readonly string[],
+    buffer: ScrollBuffer = 'scroll',
+  ): RowWindow {
     const count = this.#geometry.source.length;
     const measuredHeight = viewportHeight > 0 ? viewportHeight : 0;
     const height = measuredHeight > 0 ? measuredHeight : 340;
     const total = this.#geometry.offset(count);
     const scrollTop = Math.max(0, Math.min(requestedTop, Math.max(0, total - measuredHeight)));
-    const { start, end } = this.#rangeFor(scrollTop, height);
+    if (buffer !== 'history' && this.#range?.buffer === 'history') this.#range = undefined;
+    const { start, end } = this.#rangeFor(scrollTop, height, buffer);
     const indices = new Set<number>();
     for (let index = start; index < end; index++) indices.add(index);
     for (const key of pinned) {
@@ -193,24 +225,116 @@ export class RowViewport {
     return { start, end, scrollTop, segments: this.#segments(indices) };
   }
 
-  #rangeFor(scrollTop: number, height: number): BufferedRange {
+  /** Grow the last published wheel destination without measuring DOM or admitting more than four neighbors. */
+  extendTimelineReserve(): 'stable' | 'partial' | 'full' {
     const previous = this.#range;
+    if (previous === undefined || this.#seekTop === undefined) return 'stable';
+    const target = this.#interactiveRange(this.#seekTop, previous.height, 'timeline');
+    if (previous.start <= target.start && previous.end >= target.end) {
+      this.#range = { ...previous, buffer: 'timeline' };
+      return 'stable';
+    }
+    const start = Math.max(target.start, previous.start - 2);
+    const end = Math.min(target.end, previous.end + 2);
+    if (start === target.start && end === target.end) return 'full';
+    this.#range = { ...target, start, end, buffer: 'timeline-seek' };
+    return 'partial';
+  }
+
+  #rangeFor(scrollTop: number, height: number, buffer: ScrollBuffer): BufferedRange {
+    if (buffer === 'timeline-seek') {
+      this.#seekTop = scrollTop;
+      return this.#seekRange(scrollTop, height);
+    }
+    this.#seekTop = undefined;
+    return buffer === 'initial' || buffer === 'scroll' || buffer === 'history'
+      ? this.#listRange(scrollTop, height, buffer)
+      : this.#interactiveRange(scrollTop, height, buffer);
+  }
+
+  #seekRange(top: number, height: number): BufferedRange {
+    const first = Math.max(0, this.#geometry.boundary(top) - 1);
+    const last = this.#geometry.boundary(top + height);
+    const previous = this.#range;
+    if (previous?.height === height && previous.start <= first && previous.end >= last)
+      return previous;
+    this.#range = {
+      start: Math.max(0, first - 2),
+      end: Math.min(this.#geometry.source.length, last + 2),
+      height,
+      buffer: 'timeline-seek',
+    };
+    return this.#range;
+  }
+
+  #listRange(scrollTop: number, height: number, buffer: ScrollBuffer): BufferedRange {
+    const previous = this.#range?.height === height ? this.#range : undefined;
     const total = this.#geometry.offset(this.#geometry.source.length);
-    const visibleBottom = Math.min(total, scrollTop + height);
+    const { reserve, refill } = this.#margins(height, buffer);
+    const bufferedTop = Math.max(0, scrollTop - reserve);
+    const bufferedBottom = Math.min(total, scrollTop + height + reserve);
     if (
-      previous?.height === height &&
-      this.#geometry.offset(previous.start) <= scrollTop &&
-      this.#geometry.offset(previous.end) >= visibleBottom
+      previous !== undefined &&
+      this.#geometry.offset(previous.start) <= bufferedTop &&
+      this.#geometry.offset(previous.end) >= bufferedBottom
     )
       return previous;
-    // Consume the existing overscan before refilling it. Small scroll steps do not change DOM.
-    const start = Math.max(0, this.#geometry.boundary(scrollTop - this.#overscanPx) - 1);
+    // Refill before the scroll reserve is exposed. Extra overscan absorbs small movements.
+    const start = Math.max(0, this.#geometry.boundary(bufferedTop - refill) - 1);
     const end = Math.min(
       this.#geometry.source.length,
-      this.#geometry.boundary(scrollTop + height + this.#overscanPx),
+      this.#geometry.boundary(bufferedBottom + refill),
     );
-    this.#range = { start, end, height };
+    const bounded = { start, end, height, buffer };
+    this.#range =
+      buffer === 'history' && previous !== undefined
+        ? this.#keepVisited(bounded, previous, scrollTop)
+        : bounded;
     return this.#range;
+  }
+
+  // Each board column, timeline row or search candidate can own heavy content.
+  // Bound only the extra rows. The entire viewport and its explicit pins always fit.
+  #interactiveRange(top: number, height: number, buffer: InteractiveBuffer): BufferedRange {
+    const previous = this.#range?.height === height ? this.#range : undefined;
+    const first = Math.max(0, this.#geometry.boundary(top) - 1);
+    const last = this.#geometry.boundary(top + height);
+    const { reserve, keepRows, refillRows } = interactiveMargins(buffer, height, last - first);
+    const start = Math.max(first - keepRows, this.#geometry.boundary(top - reserve) - 1, 0);
+    const end = Math.min(last + keepRows, this.#geometry.boundary(top + height + reserve));
+    if (previous?.buffer === buffer && previous.start <= start && previous.end >= end)
+      return previous;
+    const margin = reserve + Math.min(400, height * 0.48);
+    this.#range = {
+      start: Math.max(first - refillRows, this.#geometry.boundary(top - margin) - 1, 0),
+      end: Math.min(last + refillRows, this.#geometry.boundary(top + height + margin)),
+      height,
+      buffer,
+    };
+    return this.#range;
+  }
+
+  #margins(height: number, buffer: ScrollBuffer): { reserve: number; refill: number } {
+    if (buffer === 'initial' || this.#scrollReservePx === 0)
+      return { reserve: this.#scrollReservePx, refill: this.#overscanPx };
+    return {
+      reserve: Math.max(this.#scrollReservePx, Math.min(1600, height * 1.25)),
+      refill: Math.max(this.#overscanPx, Math.min(900, height * 0.75)),
+    };
+  }
+
+  #keepVisited(next: BufferedRange, previous: BufferedRange, top: number): BufferedRange {
+    // A scrollbar jump starts a fresh window. During a continuous gesture retain
+    // the rows already traversed, so reversing direction stays native.
+    if (
+      top < this.#geometry.offset(previous.start) ||
+      top + next.height > this.#geometry.offset(previous.end) + 1
+    )
+      return next;
+    const capacity = Math.max(256, next.end - next.start);
+    const start = Math.max(Math.min(next.start, previous.start), next.end - capacity);
+    const end = Math.min(Math.max(next.end, previous.end), start + capacity);
+    return { ...next, start, end };
   }
 
   #segments(indices: ReadonlySet<number>): RowSegment[] {

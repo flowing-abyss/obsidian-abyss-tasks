@@ -159,6 +159,15 @@ it('paints and focuses the shell before a held real range and never creates whil
   ui.key('Enter');
   await flushMicrotasks(30);
   expect(h.creates).toEqual([]);
+  await vi.waitFor(() => {
+    const pending = ui.handle.element.querySelector<HTMLButtonElement>(
+      '.abyss-virtual-row-frame button[aria-hidden="true"]',
+    );
+    expect(pending?.inert).toBe(true);
+    expect(pending?.parentElement?.style.getPropertyValue('--abyss-virtual-row-height')).toBe(
+      '48px',
+    );
+  });
   held.resolve();
   await ui.completed();
   expect(ui.handle.element.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
@@ -199,6 +208,218 @@ it('bounds mounted options and reaches both logical edges and the former Arrow b
   });
   expect(open).toHaveBeenCalledTimes(1);
 });
+it.each(['click', 'keyboard'] as const)(
+  'selects a ready overlapping option while the next scroll range is still loading (%s)',
+  async (activation) => {
+    const h = await fixture(128);
+    const held = deferred<void>();
+    let block = false;
+    let waiting = false;
+    const open = h.callbacks.provider.open.bind(h.callbacks.provider);
+    h.callbacks.provider.open = async (...args) => {
+      const session = await open(...args);
+      const read = session.readRange.bind(session);
+      session.readRange = async (...args) => {
+        if (block) {
+          waiting = true;
+          await held.promise;
+        }
+        return read(...args);
+      };
+      return session;
+    };
+    try {
+      const ui = h.mount();
+      ui.query('Candidate');
+      await ui.completed();
+      const list = expectDefined(ui.handle.element.querySelector<HTMLElement>('[role="listbox"]'));
+      const clicked = expectDefined(list.querySelector<HTMLElement>('[aria-posinset="8"]'));
+      if (activation === 'keyboard') {
+        ui.key('Home');
+        for (let index = 0; index < 7; index++) ui.key('ArrowDown');
+        await vi.waitFor(() => {
+          expect(ui.active()).toBe(clicked);
+        });
+      }
+      block = true;
+      list.scrollTop = 5 * 48;
+      list.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() => {
+        expect(waiting).toBe(true);
+      });
+      expect(clicked.isConnected).toBe(true);
+      if (activation === 'keyboard') {
+        expect(ui.active()).toBe(clicked);
+        ui.key('Enter');
+      } else clicked.click();
+      await vi.waitFor(() => {
+        expect(h.writes.map((w) => w.title)).toEqual(['Candidate 7']);
+      });
+    } finally {
+      held.resolve();
+    }
+  },
+);
+
+it('publishes newly visible candidates before reserve reads and retains the pending reserve through small scrolls', async () => {
+  const h = await fixture(180);
+  let blockReserve = false;
+  const held = deferred<void>();
+  const reserve = deferred<AbortSignal>();
+  const open = h.callbacks.provider.open.bind(h.callbacks.provider);
+  h.callbacks.provider.open = async (...args) => {
+    const session = await open(...args);
+    const read = session.readRange.bind(session);
+    session.readRange = async (offset, limit, signal) => {
+      if (blockReserve && (offset < 60 || offset >= 66)) {
+        reserve.resolve(signal);
+        await held.promise;
+      }
+      return read(offset, limit, signal);
+    };
+    return session;
+  };
+  try {
+    const ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    const list = expectDefined(ui.handle.element.querySelector<HTMLElement>('[role="listbox"]'));
+    blockReserve = true;
+    list.scrollTop = 60 * 48;
+    list.dispatchEvent(new Event('scroll'));
+    const signal = await reserve.promise;
+    const first = list.querySelector<HTMLElement>('[aria-posinset="61"]');
+    expect(first?.textContent).toContain('Candidate 60');
+    list.scrollTop++;
+    list.dispatchEvent(new Event('scroll'));
+    await flushMicrotasks(10);
+    expect(signal.aborted).toBe(false);
+    expectDefined(first).click();
+    await vi.waitFor(() => {
+      expect(h.writes.map((entry) => entry.title)).toEqual(['Candidate 60']);
+    });
+  } finally {
+    held.resolve();
+  }
+});
+
+it('cancels a distant read on reversal to an already settled window', async () => {
+  const h = await fixture(180);
+  const held = deferred<void>();
+  const entered = deferred<AbortSignal>();
+  const open = h.callbacks.provider.open.bind(h.callbacks.provider);
+  h.callbacks.provider.open = async (...args) => {
+    const session = await open(...args);
+    const read = session.readRange.bind(session);
+    session.readRange = async (offset, limit, signal) => {
+      if (offset >= 80) {
+        entered.resolve(signal);
+        await held.promise;
+      }
+      return read(offset, limit, signal);
+    };
+    return session;
+  };
+  try {
+    const ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    const list = expectDefined(ui.handle.element.querySelector<HTMLElement>('[role="listbox"]'));
+    const scroll = (top: number): void => {
+      list.scrollTop = top;
+      list.dispatchEvent(new Event('scroll'));
+    };
+    scroll(30 * 48);
+    await vi.waitFor(() => {
+      expect(list.querySelector('[aria-posinset="31"]')?.textContent).toContain('Candidate 30');
+      expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+    });
+    scroll(100 * 48);
+    const signal = await entered.promise;
+    scroll(30 * 48);
+    await vi.waitFor(() => {
+      expect(signal.aborted).toBe(true);
+      expect(list.querySelector('[aria-posinset="31"]')?.textContent).toContain('Candidate 30');
+    });
+    expectDefined(list.querySelector<HTMLElement>('[aria-posinset="31"]')).click();
+    await vi.waitFor(() => {
+      expect(h.writes.map((entry) => entry.title)).toEqual(['Candidate 30']);
+    });
+  } finally {
+    held.resolve();
+  }
+});
+
+it('renders the visible candidate batch before yielding for reserve work', async () => {
+  const h = await fixture(180);
+  const entered = deferred<void>();
+  const held = deferred<void>();
+  let hold = false;
+  vi.spyOn(browserScheduler, 'createBrowserTaskScheduler').mockReturnValue({
+    now: () => 0,
+    delay: async () => {},
+    yield: async () => {
+      if (!hold) return;
+      entered.resolve();
+      await held.promise;
+    },
+  });
+  try {
+    const ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    const list = expectDefined(ui.handle.element.querySelector<HTMLElement>('[role="listbox"]'));
+    hold = true;
+    list.scrollTop = 60 * 48;
+    list.dispatchEvent(new Event('scroll'));
+    await entered.promise;
+    const visible = list.querySelector<HTMLElement>('[aria-posinset="61"]');
+    expect(visible?.textContent).toContain('Candidate 60');
+    expectDefined(visible).click();
+    await vi.waitFor(() => {
+      expect(h.writes.map((entry) => entry.title)).toEqual(['Candidate 60']);
+    });
+  } finally {
+    held.resolve();
+  }
+});
+
+it('keeps an offscreen keyboard selection valid and restores it when it returns to view', async () => {
+  const h = await fixture(128);
+  const ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key('Home');
+  const selected = expectDefined(ui.active());
+  const list = expectDefined(ui.handle.element.querySelector<HTMLElement>('[role="listbox"]'));
+  const error = expectDefined(
+    ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-error'),
+  );
+  const scroll = (top: number): void => {
+    list.scrollTop = top;
+    list.dispatchEvent(new Event('scroll'));
+  };
+  scroll(3 * 48);
+  await vi.waitFor(() => {
+    expect(ui.active()).toBeNull();
+    expect(list.querySelector('[aria-posinset="11"]')).not.toBeNull();
+    expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+  });
+  expect(selected.isConnected).toBe(true);
+  ui.key('Enter');
+  expect(error.hidden).toBe(true);
+  expect(h.writes).toEqual([]);
+  expect(h.creates).toEqual([]);
+  scroll(0);
+  await vi.waitFor(() => {
+    expect(ui.active()).toBe(selected);
+  });
+  ui.key('Enter');
+  await vi.waitFor(() => {
+    expect(h.writes.map((entry) => entry.title)).toEqual(['Candidate 0']);
+  });
+});
+
 it.each(['input', 'direction'] as const)(
   'preserves actual %s focus across a held native scroll demand',
   async (focus) => {
@@ -1373,6 +1594,8 @@ it.for(['release', 'cancel'] as const)(
       const projection = expectDefined(held);
       ui.query('  Candidate  ');
       await gapReceipt(ui, owner.generation, owner.signal);
+      const list = expectDefined(ui.handle.element.querySelector<HTMLElement>('[role="listbox"]'));
+      list.dispatchEvent(new WheelEvent('wheel', { deltaY: 48 }));
       await gapMove(ui, 'Home', owner.generation, owner.signal);
       for (let offset = 1; offset <= 5; offset++) {
         await gapMove(ui, 'ArrowDown', owner.generation, owner.signal);
@@ -1386,24 +1609,34 @@ it.for(['release', 'cancel'] as const)(
       let state: 'pending' | 'fulfilled' | 'rejected' = 'pending';
       let failure: unknown;
       projection.arm();
-      navigation = gapMove(ui, 'ArrowDown', owner.generation, owner.signal).then(
-        () => {
-          state = 'fulfilled';
-        },
-        (error: unknown) => {
-          state = 'rejected';
-          failure = error;
-        },
-      );
-      // Candidate006 is already mounted; its reveal queues the new anchor's demand.
-      expect(activeGapTitle(ui)).toBe('Candidate 006');
+      // A retained label needs no new projection until its reveal crosses the refill boundary.
+      let selected: string | undefined;
+      for (let step = 0; step < 24; step++) {
+        navigation = gapMove(ui, 'ArrowDown', owner.generation, owner.signal).then(
+          () => {
+            state = 'fulfilled';
+          },
+          (error: unknown) => {
+            state = 'rejected';
+            failure = error;
+          },
+        );
+        selected = activeGapTitle(ui) ?? undefined;
+        const pending = await ownedWait(
+          Promise.race([projection.entered.then(() => true), navigation.then(() => false)]),
+          context.signal,
+        );
+        if (pending) break;
+        state = 'pending';
+      }
+      expect(selected).toBeDefined();
       await ownedWait(projection.entered, context.signal);
       context.signal.throwIfAborted();
       await Promise.resolve();
       context.signal.throwIfAborted();
       expect(state).toBe('pending');
       expect(ui.handle.element.dataset['searchPhase']).toBe('pending');
-      expect(ui.active()).toBeNull();
+      expect(activeGapTitle(ui)).toBe(selected);
       const receiptTimer: unknown = expectDefined(
         timers.mock.results[timers.mock.calls.findIndex(([, ms]) => ms === 3000)],
       ).value;
@@ -1415,7 +1648,7 @@ it.for(['release', 'cancel'] as const)(
         await navigation;
         context.signal.throwIfAborted();
         expect(state).toBe('fulfilled');
-        expect(activeGapTitle(ui)).toBe('Candidate 006');
+        expect(activeGapTitle(ui)).toBe(selected);
       } else {
         owner.dispose();
         expect(clear).toHaveBeenCalledWith(receiptTimer);
@@ -1866,15 +2099,20 @@ function positionDemandSurface(
     );
   };
   instrumentRows(list);
-  const createFrame = list.createDiv.bind(list);
-  vi.spyOn(list, 'createDiv').mockImplementation((...args: Parameters<typeof list.createDiv>) => {
-    const element = createFrame(...args);
-    if (element.hasClass('abyss-virtual-row-frame')) {
-      position(element, true);
-      instrumentRows(element);
-    }
-    return element;
-  });
+  const instrumentFrames = (parent: HTMLElement): void => {
+    const createFrame = parent.createDiv.bind(parent);
+    vi.spyOn(parent, 'createDiv').mockImplementation(
+      (...args: Parameters<typeof list.createDiv>) => {
+        const element = createFrame(...args);
+        if (element.hasClass('abyss-virtual-row-frame')) {
+          position(element, true);
+          instrumentRows(element);
+        } else if (element.className === '') instrumentFrames(element);
+        return element;
+      },
+    );
+  };
+  instrumentFrames(list);
 }
 
 // Phase A isolates traversal cost with fixed element-local geometry and the real surface.
@@ -2061,7 +2299,7 @@ it('Phase A cancels after ten intervals, drops a late read and jumps directly to
   expect(h.owner.observers.every((observer) => observer.elements.size === 0)).toBe(true);
 });
 
-it('Phase A resumes a cancelled label projection for the unchanged mounted window without rebuilding order', async () => {
+it('Phase A retains a label projection for the unchanged mounted window without rebuilding order', async () => {
   const h = await demandFixture(0);
   const held = deferred<void>();
   const project = h.session.options.getMockImplementation();
@@ -2075,9 +2313,11 @@ it('Phase A resumes a cancelled label projection for the unchanged mounted windo
   const counts = [h.orders.mock.calls.length, h.replacements.mock.calls.length];
   h.list.dispatchEvent(new h.owner.win.Event('scroll'));
   h.owner.flush();
+  await flushMicrotasks(30);
+  expect(h.session.options).toHaveBeenCalledTimes(1);
+  held.resolve();
   await h.completed();
   expect(h.list.querySelectorAll('[role="option"]')).toHaveLength(20);
-  held.resolve();
   await flushMicrotasks(30);
   expect([h.orders.mock.calls.length, h.replacements.mock.calls.length]).toEqual(counts);
 });
@@ -3287,6 +3527,7 @@ it.for(['scroll', 'query', 'source', 'current'] as const)(
     const held = deferred<void>();
     let signal: AbortSignal | undefined;
     h.hold(async (pending) => {
+      if (signal !== undefined) return;
       signal = pending;
       await held.promise;
     });

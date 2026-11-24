@@ -6,6 +6,7 @@ import type {
   TimelineContextOverlay,
   TimelineContextOverlayLayout,
 } from '../src/panels/timeline/TimelineContextOverlay';
+import * as timelinePresentation from '../src/panels/timeline/timelinePresentation';
 import { projectCalendarDayOrdinal } from '../src/projects/projectDateValue';
 import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -21,6 +22,7 @@ it('bounds mounted rows and calendar cells and reveals a distant task through th
   const host = document.body.createDiv({ cls: 'abyss-center-scroll' });
   prepareTaskPanelViewport(host);
   const settings = defaultTaskTimelineSettings();
+  const measurementReady = vi.fn(() => true);
   const surface = new TaskTimelineSurface<TaskPlanning>(
     {
       host,
@@ -34,6 +36,7 @@ it('bounds mounted rows and calendar cells and reveals a distant task through th
         element.dataset['key'] = row.key;
         return {
           element,
+          measurementReady,
           update: () => {},
           destroy: () => {
             element.remove();
@@ -86,7 +89,9 @@ it('bounds mounted rows and calendar cells and reveals a distant task through th
     expect(host.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
     expect(host.querySelectorAll('.abyss-task-card').length).toBeLessThan(100);
     expect(host.querySelectorAll('.abyss-project-timeline-axis-cell').length).toBeLessThan(100);
+    host.dispatchEvent(new WheelEvent('wheel', { deltaY: 180 }));
     expect(surface.reveal('n:4999')?.dataset['key']).toBe('n:4999');
+    expect(measurementReady).toHaveBeenCalledWith(true);
     expect(surface.mountedKeys().length).toBeLessThan(100);
     const card = expectDefined(surface.element('n:4999'));
     expect(card.classList.contains('abyss-task-card')).toBe(true);
@@ -222,6 +227,113 @@ function continuousTimeline(
     },
   };
 }
+
+it('keeps a screenful of task rows ready before each fast vertical step and reversal', () => {
+  const h = continuousTimeline(900, undefined, undefined, 5000);
+  try {
+    const firstLeft = h.host.scrollLeft;
+    for (const top of [896, 1792, 2688, 1792, 896]) {
+      h.host.scrollTop = top;
+      // The compositor may move the viewport before notifying the virtualizer.
+      for (const offset of [64, 448, 832]) {
+        const index = Math.floor((top + offset) / 64);
+        expect(h.surface.element(`row:${index}`)?.isConnected).toBe(true);
+      }
+      h.host.dispatchEvent(new Event('scroll'));
+      h.flush();
+      expect(h.surface.mountedKeys().length).toBeLessThanOrEqual(80);
+    }
+    expect(h.host.scrollLeft).toBe(firstLeft);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('synchronizes large vertical pixel-wheel steps with the painted Timeline and preserves native input elsewhere', () => {
+  const h = continuousTimeline(900, undefined, undefined, 640);
+  Object.defineProperty(h.host, 'scrollHeight', { configurable: true, value: 640 * 64 });
+  const wheel = (init: WheelEventInit) => {
+    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init });
+    h.host.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  try {
+    const left = h.host.scrollLeft;
+    expect(wheel({ deltaY: 200 })).toBe(false);
+    expect(wheel({ deltaY: 3600, ctrlKey: true })).toBe(false);
+    expect(wheel({ deltaY: 3600, shiftKey: true })).toBe(false);
+    expect(wheel({ deltaY: 3600, deltaX: 4800 })).toBe(false);
+    const nested = h.host.createDiv();
+    nested.style.overflowY = 'auto';
+    Object.defineProperties(nested, { clientHeight: { value: 60 }, scrollHeight: { value: 260 } });
+    const overNested = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 1800 });
+    nested.dispatchEvent(overNested);
+    expect(overNested.defaultPrevented).toBe(false);
+    nested.remove();
+    expect(wheel({ deltaY: -3600 })).toBe(false);
+    expect(wheel({ deltaY: 3600, deltaX: 12 })).toBe(true);
+    expect(h.host.scrollTop).toBe(3600);
+    expect(h.host.scrollLeft).toBe(left + 12);
+    expect(wheel({ deltaY: -1500 })).toBe(true);
+    expect(h.host.scrollTop).toBe(2100);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('fills a distant jump before the next animation callback and admits only the last position', async () => {
+  const h = continuousTimeline(900, undefined, undefined, 5000);
+  try {
+    for (const top of [64000, 32000]) {
+      h.host.scrollTop = top;
+      h.host.dispatchEvent(new Event('scroll'));
+    }
+    await Promise.resolve();
+    expect(h.surface.element('row:505')?.isConnected).toBe(true);
+    expect(h.surface.element('row:1005')).toBeUndefined();
+    expect(h.surface.mountedKeys().length).toBeLessThanOrEqual(80);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('reuses the calendar grid while mounting new rows on a vertical fling', () => {
+  const overlayUpdate = vi.fn();
+  const h = continuousTimeline(
+    900,
+    undefined,
+    () => ({
+      range: () => ({ kind: 'unscheduled' }),
+      update: overlayUpdate,
+      mountTrack: () => () => {},
+      cancel: () => {},
+      destroy: () => {},
+    }),
+    5000,
+  );
+  try {
+    h.flush();
+    const grid = () => expectDefined(h.host.querySelector('.abyss-project-timeline-grid'));
+    const expected = grid().innerHTML;
+    expect(grid().childElementCount).toBeGreaterThan(0);
+    const patch = vi.spyOn(timelinePresentation, 'patchTimelineGrid');
+    overlayUpdate.mockClear();
+    h.host.scrollTop = 32000;
+    h.host.dispatchEvent(new Event('scroll'));
+    h.flush();
+    expect(h.surface.element('row:505')?.isConnected).toBe(true);
+    expect(grid().innerHTML).toBe(expected);
+    expect(patch).not.toHaveBeenCalled();
+    expect(overlayUpdate).not.toHaveBeenCalled();
+    h.host.scrollLeft += 400;
+    h.host.dispatchEvent(new Event('scroll'));
+    h.flush();
+    expect(overlayUpdate).toHaveBeenCalled();
+    expect(grid().innerHTML).not.toBe(expected);
+  } finally {
+    h.dispose();
+  }
+});
 
 it('centers Today, keeps a fractional zoom center, and centers active scales without a settings write', () => {
   const h = continuousTimeline();
@@ -366,12 +478,18 @@ it('preserves logical focus while moving the retained surface to another owning 
     h.host.dispatchEvent(new Event('scroll'));
     const center = h.surface.captureScroll().center;
     if (center === 'today') throw new Error('Expected a measured timeline center');
+    const grids = vi.spyOn(timelinePresentation, 'patchTimelineGrid');
     target.doc.body.append(h.host);
     migration.notify(h.host);
     h.surface.resume();
     h.flush();
     target.flush();
     expect(h.surface.captureScroll().center).toBeCloseTo(center, 9);
+    h.host.scrollLeft += 400;
+    h.host.dispatchEvent(new Event('scroll'));
+    target.flush();
+    expect(grids).toHaveBeenCalled();
+    expect(grids.mock.calls.every(([grid]) => grid.ownerDocument === target.doc)).toBe(true);
     expect(target.observers.some((observer) => observer.elements.has(h.host))).toBe(true);
     h.surface.destroy();
     expect(target.frames.size).toBe(0);
@@ -737,4 +855,29 @@ it('bounds native horizontal geometry reads as the mounted row count grows', () 
   const large = sample(5000);
   expect(large.mounted).toBeGreaterThan(small.mounted * 10);
   expect(large.reads).toBeLessThanOrEqual(small.reads + 2);
+});
+
+it('samples the horizontal offset once per window while revealing a distant batch', () => {
+  const h = continuousTimeline(900, undefined, undefined, 5000);
+  try {
+    h.flush();
+    let left = h.host.scrollLeft;
+    const read = vi.fn(() => left);
+    Object.defineProperty(h.host, 'scrollLeft', {
+      configurable: true,
+      get: read,
+      set: (next: number) => {
+        left = next;
+      },
+    });
+    const initial = new Set(h.surface.mountedKeys());
+    h.host.scrollTop = 60000;
+    h.host.dispatchEvent(new Event('scroll'));
+    h.flush();
+    const inserted = h.surface.mountedKeys().filter((key) => !initial.has(key));
+    expect(inserted.length).toBeGreaterThan(12);
+    expect(read.mock.calls.length).toBeLessThan(inserted.length);
+  } finally {
+    h.dispose();
+  }
 });

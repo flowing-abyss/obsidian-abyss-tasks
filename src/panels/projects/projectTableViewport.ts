@@ -38,7 +38,12 @@ export class ProjectTableViewport {
     return this.#viewport.reveal(key, requestedTop, viewportHeight);
   }
 
-  window(requestedTop: number, viewportHeight: number, pinned: readonly string[]): RowWindow {
-    return this.#viewport.window(requestedTop, viewportHeight, pinned);
+  window(
+    requestedTop: number,
+    viewportHeight: number,
+    pinned: readonly string[],
+    buffer?: 'scroll' | 'interactive',
+  ): RowWindow {
+    return this.#viewport.window(requestedTop, viewportHeight, pinned, buffer);
   }
 }

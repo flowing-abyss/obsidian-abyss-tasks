@@ -228,9 +228,11 @@ export class CreationPresentationController {
     this.presentResolved();
   }
 
-  refreshMounted(root: HTMLElement): void {
+  refreshMounted(root: HTMLElement, visible?: () => boolean): void {
     if (this.destroyed || this.renderRoot !== root) return;
     this.removeExpired();
+    if (!this.pending.some((entry) => entry.highlightUntil !== undefined) || visible?.() === false)
+      return;
     for (const entry of [...this.pending]) {
       if (entry.highlightUntil === undefined) continue;
       if (entry.revealAuthority?.isCurrent() === false) this.finish(entry);

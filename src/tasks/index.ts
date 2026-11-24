@@ -122,11 +122,12 @@ export { hierarchyWouldCycle } from './domain/taskHierarchy';
 
 export type { TaskDependencySummary } from './domain/taskSearchTypes';
 
-export type {
-  TaskReadProjectionApi,
-  TaskSearchApi,
-  TaskSearchCursor,
-  TaskSearchState,
+export {
+  searchHydrationLimits,
+  type TaskReadProjectionApi,
+  type TaskSearchApi,
+  type TaskSearchCursor,
+  type TaskSearchState,
 } from './application/TaskSearchApi';
 export { TaskSearchError } from './domain/taskSearchTypes';
 export type {

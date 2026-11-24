@@ -426,10 +426,11 @@ describe('ProjectsTableView', () => {
     class TestResizeObserver {
       constructor(callback: ResizeObserverCallback) {
         resize = () => {
-          callback([], this as unknown as ResizeObserver);
+          callback([], this);
         };
       }
       observe(): void {}
+      unobserve(): void {}
       disconnect(): void {}
     }
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
@@ -557,9 +558,10 @@ describe('ProjectsTableView', () => {
       observe(target: Element): void {
         this.targets.push(target);
       }
+      unobserve(): void {}
       disconnect(): void {}
       trigger(): void {
-        this.callback([], this as unknown as ResizeObserver);
+        this.callback([], this);
       }
     }
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
@@ -625,6 +627,26 @@ describe('ProjectsTableView', () => {
     expect(scroll.scrollTop).toBe(999999);
   });
 
+  it('has the next strip of project cells ready before a fast scroll reverses', () => {
+    const { host, scroll, view } = largeTable();
+    const name = (index: number) =>
+      host.querySelector<HTMLElement>(
+        `[data-project-path="Projects/P${String(index).padStart(4, '0')}.md"] [data-column-id="name"]`,
+      );
+    expect(name(19)).toBeNull();
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(name(118)?.textContent).toContain('P0118');
+    scroll.scrollTop -= 280;
+    const target = expectDefined(name(92));
+    expect(target.textContent).toContain('P0092');
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(name(92)).toBe(target);
+    target.click();
+    expect(view.selectedProjectPath()).toBe('Projects/P0092.md');
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
   it('keeps each drop run end where the original rule drew it while the window changes', () => {
     const resize = stubResizeObserver();
     const { host, scroll, view, config, projects } = largeTable(true);
@@ -652,7 +674,10 @@ describe('ProjectsTableView', () => {
     scroll.dispatchEvent(new Event('scroll'));
     row('P0100').dispatchEvent(dragEvent('dragover', data));
     const ends = markedDropEnds(host);
-    expect(ends).toEqual([source, row('P0113')]);
+    const lastMounted = expectDefined(
+      host.querySelector('.abyss-project-table-row:has(+ .abyss-project-table-spacer:last-child)'),
+    );
+    expect(ends).toEqual([source, lastMounted]);
     for (const end of ends) {
       expect(end.nextElementSibling?.classList.contains('abyss-project-table-spacer')).toBe(true);
     }
@@ -662,7 +687,9 @@ describe('ProjectsTableView', () => {
     // A taller window only adds rows, which carry no drop state, so the ends stay.
     Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 1700 });
     resize();
-    expect(row('P0113').nextElementSibling).toBe(row('P0114'));
+    expect(lastMounted.nextElementSibling?.classList.contains('abyss-project-table-row')).toBe(
+      true,
+    );
     expect(markedDropEnds(host)).toEqual(ends);
     expectRunEndsOfTheRule();
     // A window change that removes a row clears the whole preview until the next dragover.
@@ -817,6 +844,24 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('[data-project-path="Projects/P0015.md"]')).not.toBeNull();
     expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
     observer.disconnect();
+  });
+
+  it('uses observed row resizes to remeasure a warmed Table window between scrolls', () => {
+    const resize = stubResizeObserver();
+    const { host, scroll } = largeTable();
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    const row = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/P0100.md"]'),
+    );
+    const measurement = vi
+      .spyOn(row, 'getBoundingClientRect')
+      .mockReturnValue(rectangle(0, 0, 900, 34));
+    scroll.scrollTop++;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(measurement).not.toHaveBeenCalled();
+    resize();
+    expect(measurement).toHaveBeenCalled();
   });
 
   it('does not mutate an unchanged viewport window or its spacer styles', () => {
@@ -3830,9 +3875,10 @@ describe('ProjectsTableView', () => {
         resizeObservers.push(this);
       }
       observe(): void {}
+      unobserve(): void {}
       disconnect(): void {}
       trigger(): void {
-        this.callback([], this as unknown as ResizeObserver);
+        this.callback([], this);
       }
     }
     vi.stubGlobal('ResizeObserver', TestResizeObserver);

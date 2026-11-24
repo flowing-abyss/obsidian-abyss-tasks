@@ -401,7 +401,8 @@ async function iterations(
     process.stdout.write('Separate CDP diagnostic pass\n');
     await setDebugger(true);
     await resetCycle(tx, before, output);
-    await evaluate('return await window.__abyssProfile.cycle(0,true);');
+    // A complete cross-view trace can take several minutes to drain through Electron.
+    await evaluate('return await window.__abyssProfile.cycle(0,true);', 360000);
   }
 }
 

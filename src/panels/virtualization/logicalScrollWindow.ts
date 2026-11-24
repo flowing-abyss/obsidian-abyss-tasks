@@ -31,6 +31,10 @@ export class LogicalScrollWindow {
     this.#maxExtent = maxExtent;
   }
 
+  isCompressed(totalHeight: number): boolean {
+    return totalHeight > this.#maxExtent;
+  }
+
   place(logicalTop: number, totalHeight: number, viewportHeight: number): LogicalScrollPlacement {
     const extent = Math.min(this.#maxExtent, totalHeight);
     const L = Math.max(0, totalHeight - viewportHeight);

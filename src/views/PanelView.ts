@@ -842,7 +842,8 @@ export class PanelView extends ItemView {
       onCreationResult: (result, description, revealAuthority) => {
         this.presentCreationResult_abyssPrivate(result, description, revealAuthority);
       },
-      onTaskRowsSettled: (root) => this.creationPresentation_abyssPrivate?.refreshMounted(root),
+      onTaskRowsSettled: (root, visible) =>
+        this.creationPresentation_abyssPrivate?.refreshMounted(root, visible),
       onTaskFooterVisibilityChange: this.setTaskFooterVisibility_abyssPrivate.bind(this),
       onRenderComplete: (root) => {
         this.creationPresentation_abyssPrivate?.afterRender(root);

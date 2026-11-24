@@ -101,6 +101,21 @@ function harness(count = 2000) {
   };
 }
 describe('virtual task Kanban', () => {
+  it('covers a coalesced first swipe on a touch board before a scroll callback runs', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' }));
+    try {
+      const { host, mounted } = harness();
+      const body = expectDefined(host.querySelector<HTMLElement>('.abyss-task-kanban-column-body'));
+      body.scrollTop = 400;
+      const cards = [...body.querySelectorAll('.abyss-task-card')];
+      expect(
+        expectDefined(cards[cards.length - 1]).getBoundingClientRect().bottom,
+      ).toBeGreaterThanOrEqual(body.getBoundingClientRect().bottom);
+      expect(mounted.size).toBeLessThan(100);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it('returns complete board-relative column bounds even for unmounted tasks', () => {
     const h = harness(200);
     expect(h.mounted.size).toBeLessThan(100);

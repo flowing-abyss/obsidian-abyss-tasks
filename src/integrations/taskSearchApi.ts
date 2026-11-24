@@ -10,6 +10,7 @@ import {
   matchesInboxPolicy,
   observedTaskTags,
   sameTag,
+  searchHydrationLimits,
   type TaskNodeReadQuery,
   type TaskReadNode,
   type TaskSearchApi,
@@ -292,7 +293,7 @@ export class TaskSearchReads {
       const batch = await port.read(
         position.native,
         offset,
-        Math.min(50, position.native.total - offset),
+        Math.min(searchHydrationLimits.roots, position.native.total - offset),
         signal,
       );
       const hydrated = await port.resolveHits(batch.hits, signal);

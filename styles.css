@@ -2693,6 +2693,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   overflow: clip;
 }
 
+.abyss-virtual-row-frame[hidden] {
+  display: none;
+}
+
 .abyss-task-list-surface > .abyss-virtual-row-frame-clipped > :not(.abyss-virtual-row-parked) {
   position: relative;
   top: var(--abyss-virtual-row-offset);
@@ -8258,10 +8262,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline[hidden],
-.abyss-project-timeline-metadata[hidden],
-.abyss-project-timeline-progress[hidden],
-.abyss-project-timeline-group-header[hidden],
-.abyss-project-timeline-group-body[hidden] {
+.abyss-project-timeline [hidden] {
   display: none;
 }
 
@@ -8483,8 +8484,7 @@ body .abyss-project-timeline-scroll::-webkit-scrollbar {
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.abyss-project-timeline-row:hover,
-.abyss-project-timeline-row.is-selected {
+.abyss-project-timeline-row:is(:hover, .is-selected) {
   background: var(--background-modifier-hover);
 }
 
@@ -8495,8 +8495,7 @@ body .abyss-project-timeline-scroll::-webkit-scrollbar {
   padding: 5px 9px;
 }
 
-.abyss-project-timeline-row:hover .abyss-project-timeline-summary,
-.abyss-project-timeline-row.is-selected .abyss-project-timeline-summary {
+.abyss-project-timeline-row:is(:hover, .is-selected) .abyss-project-timeline-summary {
   background-color: var(--background-primary);
   background-image: linear-gradient(
     var(--background-modifier-hover),
@@ -8659,13 +8658,6 @@ body .abyss-project-timeline-scroll::-webkit-scrollbar {
   outline-offset: -2px;
 }
 
-.abyss-project-timeline-bar[hidden],
-.abyss-project-timeline-state[hidden],
-.abyss-project-timeline-cursor[hidden],
-.abyss-project-timeline-tooltip[hidden] {
-  display: none;
-}
-
 .abyss-project-timeline-bar {
   position: absolute;
   z-index: 1;
@@ -8736,10 +8728,6 @@ body.is-mobile
 
 .abyss-project-timeline-handle.is-end {
   right: 0;
-}
-
-.abyss-project-timeline-handle[hidden] {
-  display: none;
 }
 
 .abyss-project-timeline-cursor {
@@ -11945,10 +11933,6 @@ button.abyss-calendar-date[aria-pressed='true'] {
   position: absolute;
   inset: 0;
   pointer-events: none;
-}
-
-.abyss-task-timeline-scheduled-track[hidden] {
-  display: none;
 }
 
 .abyss-task-timeline-scheduled-track > .abyss-project-timeline-bar {

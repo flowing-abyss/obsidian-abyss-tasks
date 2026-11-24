@@ -73,7 +73,10 @@ export function taskTextNeedsMarkdown(
   text: string,
   presentation: 'title' | 'markdown' | 'description',
 ): boolean {
+  // A highlight needs a closing delimiter after at least one character of content.
+  const highlightStart = text.indexOf('==');
   return (
+    (highlightStart !== -1 && text.indexOf('==', highlightStart + 3) !== -1) ||
     /[\\*_~`[\]<>&!\r\n]/u.test(text) ||
     (presentation !== 'title' && /^\s*(?:#{1,6}\s|[-+]\s|\d+[.)]\s)/u.test(text))
   );

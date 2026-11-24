@@ -262,7 +262,7 @@ interface CenterPanelOptions {
         revealAuthority?: CreationRevealAuthority,
       ) => void)
     | undefined;
-  readonly onTaskRowsSettled?: ((root: HTMLElement) => void) | undefined;
+  readonly onTaskRowsSettled?: ((root: HTMLElement, visible: () => boolean) => void) | undefined;
   readonly onTaskFooterVisibilityChange?: ((visible: boolean) => void) | undefined;
   readonly onRenderComplete?: ((root: HTMLElement) => void) | undefined;
   readonly interactionOwnership?: InteractionOwnershipPort | undefined;
@@ -284,7 +284,8 @@ export class CenterPanel {
   private captureContextRevision_abyssPrivate = 0;
   private readonly creationAttempts_abyssPrivate = new Set<() => void>();
   private taskRowsSettledQueued_abyssPrivate = false;
-  private onTaskRowsSettled_abyssPrivate: ((root: HTMLElement) => void) | undefined;
+  private onTaskRowsSettled_abyssPrivate:
+    ((root: HTMLElement, visible: () => boolean) => void) | undefined;
   private onTaskFooterVisibilityChange_abyssPrivate: ((visible: boolean) => void) | undefined;
   private taskDateFocusContinuityKey_abyssPrivate: string | null = null;
   private taskDateFocusRefs_abyssPrivate: TaskRef[] = [];
@@ -841,7 +842,7 @@ export class CenterPanel {
     const compact = retained?.search;
     if (retained === null || compact?.identity !== identity) return;
     if (this.taskSearchReveal_abyssPrivate.consumedScroll) {
-      this.refreshSearchPulse_abyssPrivate();
+      this.refreshSearchPulse_abyssPrivate(() => true);
       return;
     }
     const intent = this.state_abyssPrivate.taskSelectionIntentGeneration;
@@ -1439,13 +1440,14 @@ export class CenterPanel {
 
   private createTaskCollectionSurface_abyssPrivate(
     options: TaskListSurfaceOptions<SurfaceTask>,
+    scrollReservePx = 0,
   ): TaskCollectionSurface<SurfaceTask> {
     const key = this.taskViewportKey_abyssPrivate();
     const saved = key === undefined ? undefined : this.taskScroll_abyssPrivate.get(key);
     if (this.taskCollectionView_abyssPrivate() === 'timeline')
       return this.restoreTaskTimeline_abyssPrivate(options, saved);
     if (!this.isTaskKanban_abyssPrivate()) {
-      const surface = new TaskListSurface(options);
+      const surface = new TaskListSurface(options, scrollReservePx);
       if (saved?.type === 'list') surface.restoreScroll(saved.value);
       return surface;
     }
@@ -1672,6 +1674,12 @@ export class CenterPanel {
         },
       }),
       scheduler: createBrowserTaskScheduler(owner),
+      ...(this.taskCollectionView_abyssPrivate() === 'timeline' && {
+        visibleTimelineRows: () => {
+          const surface = this.taskSurface_abyssPrivate?.surface;
+          return surface instanceof TaskTimelineSurface ? surface.visibleMountedKeys() : [];
+        },
+      }),
       prepareDependencies: (g, signal) =>
         this.tasks_abyssPrivate?.queries.prepareDependencies(g, signal) ??
         Promise.reject(new Error('Task dependency capability missing')),
@@ -1690,6 +1698,7 @@ export class CenterPanel {
     const surface = this.createTaskCollectionSurface_abyssPrivate({
       host,
       scroll: this.taskCollectionScrollElement_abyssPrivate(host),
+      ...(this.taskCollectionView_abyssPrivate() === 'timeline' && { stagedMounts: 'detached' }),
       mount: (container, row) => {
         if (row.kind === 'task' && 'root' in row.task) throw new Error('Expected compact row');
         const mount = rows.mount(
@@ -2237,11 +2246,11 @@ export class CenterPanel {
     return a !== undefined && taskSearchAddressKey(a) === taskSearchAddressKey(b);
   }
 
-  private refreshSearchPulse_abyssPrivate(): void {
+  private refreshSearchPulse_abyssPrivate(visible: () => boolean): void {
     const retained = this.taskSurface_abyssPrivate;
     if (retained === null) return;
     const compact = retained.search;
-    if (compact?.revealOwner === undefined) return;
+    if (compact?.revealOwner === undefined || !visible()) return;
     for (const key of retained.surface.mountedKeys()) {
       const address = compact.order.task(key)?.address;
       if (
@@ -2270,12 +2279,12 @@ export class CenterPanel {
           retained !== this.taskSurface_abyssPrivate ||
           retained.search?.identity !== identity ||
           retained.host.ownerDocument.defaultView !== owner ||
-          retained.options.isCurrent?.() === false ||
-          !this.creationHostVisible_abyssPrivate(retained.host)
+          retained.options.isCurrent?.() === false
         )
           return;
-        this.refreshSearchPulse_abyssPrivate();
-        this.onTaskRowsSettled_abyssPrivate?.(this.el);
+        const visible = (): boolean => this.creationHostVisible_abyssPrivate(retained.host);
+        this.refreshSearchPulse_abyssPrivate(visible);
+        this.onTaskRowsSettled_abyssPrivate?.(this.el, visible);
       })
       .catch((error: unknown) => {
         if (retained === this.taskSurface_abyssPrivate)
@@ -3436,25 +3445,28 @@ export class CenterPanel {
       !this.taskSurfaceMatchesView_abyssPrivate()
     ) {
       this.destroyTaskSurface_abyssPrivate();
-      const surface = this.createTaskCollectionSurface_abyssPrivate({
-        host,
-        scroll: this.taskCollectionScrollElement_abyssPrivate(host),
-        mount: (container, row) => {
-          if (row.kind === 'task' && !('root' in row.task))
-            throw new Error('Expected snapshot row');
-          return this.mountTaskRow_abyssPrivate(
-            container,
-            row.kind === 'group' ? row : { ...row, task: row.task as TaskNodeSnapshot },
-            tagGroups,
-          );
+      const surface = this.createTaskCollectionSurface_abyssPrivate(
+        {
+          host,
+          scroll: this.taskCollectionScrollElement_abyssPrivate(host),
+          mount: (container, row) => {
+            if (row.kind === 'task' && !('root' in row.task))
+              throw new Error('Expected snapshot row');
+            return this.mountTaskRow_abyssPrivate(
+              container,
+              row.kind === 'group' ? row : { ...row, task: row.task as TaskNodeSnapshot },
+              tagGroups,
+            );
+          },
+          mountedChanged: () => {
+            this.patchMountedSelection_abyssPrivate();
+          },
+          reportFailure: (error) => {
+            this.reportTaskRenderFailure_abyssPrivate(error);
+          },
         },
-        mountedChanged: () => {
-          this.patchMountedSelection_abyssPrivate();
-        },
-        reportFailure: (error) => {
-          this.reportTaskRenderFailure_abyssPrivate(error);
-        },
-      });
+        400,
+      );
       this.taskSurface_abyssPrivate = {
         viewKey: this.taskViewportKey_abyssPrivate(),
         host,
@@ -3676,20 +3688,23 @@ export class CenterPanel {
   }
 
   private taskRowReadiness_abyssPrivate(current: () => TaskCardMount | undefined): {
-    readonly measurementReady: () => boolean;
+    readonly measurementReady: (scrolling?: boolean) => boolean;
     readonly observe: (card: TaskCardMount) => void;
   } {
     let readyReceipt: Promise<TaskRenderOutcome> | undefined;
     return {
-      measurementReady: () => {
+      measurementReady: (scrolling = false) => {
         const card = current();
-        return card !== undefined && card.settled === readyReceipt;
+        if (card === undefined) return false;
+        if (scrolling && card.committedSynchronously === true) readyReceipt = card.settled;
+        return card.settled === readyReceipt;
       },
       observe: (card) => {
         const retained = this.taskSurface_abyssPrivate;
         const document = card.element.ownerDocument;
         this.observeTaskCardReceipt_abyssPrivate(card, (receipt) => {
           if (
+            readyReceipt === receipt ||
             current() !== card ||
             retained !== this.taskSurface_abyssPrivate ||
             card.element.ownerDocument !== document

@@ -245,6 +245,10 @@ export class ProjectKanbanDragController {
   private readonly hoverTitles_abyssPrivate = new Map<string, { path: string; name: string }>();
   private hoverContent_abyssPrivate: HTMLElement | undefined;
 
+  get dragging(): boolean {
+    return this.active_abyssPrivate !== undefined;
+  }
+
   constructor(
     private readonly root_abyssPrivate: HTMLElement,
     private readonly scroll_abyssPrivate: HTMLElement,

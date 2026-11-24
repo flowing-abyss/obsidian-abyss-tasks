@@ -60,11 +60,11 @@ function completion(stdout: string, id: string): unknown {
 async function waitForCompletion(
   result: string,
   id: string,
-  deadline: number,
+  timing: { deadline: number; timeoutMs: number },
   launch: { error?: Error },
 ): Promise<unknown> {
   // Only the controller polls its own filesystem; no CLI/renderer polling occurs in timed spans.
-  while (Date.now() < deadline) {
+  while (Date.now() < timing.deadline) {
     let stdout: string | undefined;
     try {
       stdout = await readFile(result, 'utf8');
@@ -75,11 +75,13 @@ async function waitForCompletion(
     if (launch.error !== undefined) throw launch.error;
     await delay(50);
   }
-  throw new Error('Profiler evaluation timed out after 120000ms; native work may still be running');
+  throw new Error(
+    `Profiler evaluation timed out after ${timing.timeoutMs}ms; native work may still be running`,
+  );
 }
 
-export async function evaluate<T>(body: string): Promise<T> {
-  const deadline = Date.now() + 120000;
+export async function evaluate<T>(body: string, timeoutMs = 120000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
   const directory = await mkdtemp(path.join(tmpdir(), 'abyss-profile-eval-'));
   const staging = path.join(directory, 'pending');
   const result = path.join(directory, 'result');
@@ -114,7 +116,7 @@ export async function evaluate<T>(body: string): Promise<T> {
       .catch((error: unknown) => {
         launch.error = error instanceof Error ? error : new Error(String(error));
       });
-    value = (await waitForCompletion(result, directory, deadline, launch)) as T;
+    value = (await waitForCompletion(result, directory, { deadline, timeoutMs }, launch)) as T;
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
   }

@@ -221,6 +221,57 @@ describe('native Kanban columns', () => {
       expect(errors).toEqual([]);
     },
   );
+  it('prepares both edges of the scrolling column and preserves its focused card on reversal', () => {
+    const callbacks: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) =>
+      callbacks.push(callback),
+    );
+    const frame = () => {
+      for (const callback of callbacks.splice(0)) callback(0);
+    };
+    const { owner, scroll } = nativeColumn();
+    const neighbor = nativeColumn();
+    frame();
+    expect(owner.element('g:10')).toBeUndefined();
+    scroll.dispatchEvent(new WheelEvent('wheel', { deltaY: 200 }));
+    frame();
+    expect(owner.element('g:10')?.isConnected).toBe(true);
+    const focused = expectDefined(owner.element('g:0'));
+    focused.focus();
+    scroll.scrollTop = 4000;
+    scroll.dispatchEvent(new Event('scroll'));
+    frame();
+    expect(owner.element('g:110')?.textContent).toBe('g:110');
+    scroll.scrollTop -= 200;
+    const target = expectDefined(owner.element('g:95'));
+    scroll.dispatchEvent(new Event('scroll'));
+    frame();
+    expect(owner.element('g:95')).toBe(target);
+    expect(document.activeElement).toBe(focused);
+    expect(neighbor.owner.element('g:10')).toBeUndefined();
+  });
+  it('leaves a measured column alone on same-window scroll and observes subsequent changes', () => {
+    const resources = recordVirtualSurfaceResources();
+    const callbacks: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) =>
+      callbacks.push(callback),
+    );
+    const frame = () => {
+      for (const callback of callbacks.splice(0)) callback(0);
+    };
+    const { owner, scroll, reconciled } = nativeColumn();
+    frame();
+    const measurement = vi.spyOn(expectDefined(owner.element('g:0')), 'getBoundingClientRect');
+    reconciled.mockClear();
+    scroll.scrollTop++;
+    scroll.dispatchEvent(new Event('scroll'));
+    frame();
+    expect(measurement).not.toHaveBeenCalled();
+    expect(reconciled).not.toHaveBeenCalled();
+    for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+    frame();
+    expect(measurement).toHaveBeenCalled();
+  });
   it('previews a sorted landing at an unmounted neighbor without mounting it', () => {
     const { owner } = nativeColumn();
     expect(owner.element('g:900')).toBeUndefined();
@@ -275,7 +326,7 @@ describe('native Kanban columns', () => {
     callbacks.splice(0).forEach((callback) => {
       callback(0);
     });
-    expect(reconciled).toHaveBeenCalledTimes(3);
+    expect(reconciled).toHaveBeenCalledTimes(2);
     expect(write).not.toHaveBeenCalled();
     value = -3.5;
     scroll.dispatchEvent(new Event('scroll'));
@@ -283,7 +334,7 @@ describe('native Kanban columns', () => {
     callbacks.splice(0).forEach((callback) => {
       callback(0);
     });
-    expect(reconciled).toHaveBeenCalledTimes(4);
+    expect(reconciled).toHaveBeenCalledTimes(2);
     expect(write).not.toHaveBeenCalled();
   });
   it('unloads every mounted Component exactly once after its mount cleanup', () => {

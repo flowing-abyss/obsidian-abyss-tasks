@@ -71,9 +71,9 @@ it.each([95.5, 111])(
         frame();
         await flushMicrotasks(40);
       };
-      await move(1200);
+      await move(2500);
       expect(surface.element('ordinary.md:8')).toBeUndefined();
-      await move(900);
+      // Keep row 8 beyond the reserve until the upward scroll starts its new Markdown render.
       const anchor = expectDefined(surface.element('ordinary.md:15'));
       hold = true;
       scroll.scrollTop = 650;

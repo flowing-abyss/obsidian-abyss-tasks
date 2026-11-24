@@ -93,6 +93,18 @@ describe('shared row viewport geometry', () => {
     expect(v.captureAnchor(80)).toBeUndefined();
   });
 
+  it('retains an existing window for a covered Timeline seek and admits only visible rows, two neighbors and pins for a distant one', () => {
+    const viewport = new RowViewport();
+    viewport.replace(rows(Array.from({ length: 1000 }, (_, i) => String(i))));
+    const opening = viewport.window(4000, 400, [], 'timeline');
+    const covered = viewport.window(4100, 400, [], 'timeline-seek');
+    expect([covered.start, covered.end]).toEqual([opening.start, opening.end]);
+    const jump = viewport.window(8001, 400, ['42'], 'timeline-seek');
+    expect([jump.start, jump.end]).toEqual([198, 213]);
+    expect(jump.segments).toContainEqual({ index: 42 });
+    expect(viewport.window(8001, 400, [], 'timeline').end).toBeGreaterThan(jump.end);
+  });
+
   it('preserves the exact-boundary anchor through a measurement batch', () => {
     const v = new RowViewport();
     v.replace(rows(['a', 'b', 'c']));
@@ -201,6 +213,106 @@ describe('shared row viewport geometry', () => {
     expect(window.segments.filter((segment) => 'index' in segment)).toHaveLength(20);
     expect(v.rowAt(20000)?.key).toBe('500');
     expect(v.reveal(String(count - 1), 0, 400)).toBe(count * 40 - 400);
+  });
+
+  it.each([320, 700])('keeps fast steps covered across refills in a %ipx viewport', (height) => {
+    const viewport = new RowViewport(170, 400);
+    viewport.replace(
+      rows(
+        Array.from({ length: 1000 }, (_, index) => String(index)),
+        40,
+      ),
+    );
+    let previous = viewport.window(0, height, []);
+    for (const top of [560, 840, 1120, 840, 560, 280, 0, 280]) {
+      expect(previous.start * 40).toBeLessThanOrEqual(top);
+      expect(previous.end * 40).toBeGreaterThanOrEqual(top + height);
+      previous = viewport.window(top, height, []);
+      expect(previous.end - previous.start).toBeLessThanOrEqual(
+        Math.ceil((height + 2 * (Math.max(400, height * 1.25) + height * 0.75)) / 40) + 2,
+      );
+    }
+  });
+
+  it.each([16, 48, 80])('buffers rapid turns with bounded extra rows at height %i', (rowHeight) => {
+    const viewport = new RowViewport();
+    viewport.replace(
+      rows(
+        Array.from({ length: 2000 }, (_, n) => String(n)),
+        rowHeight,
+      ),
+    );
+    const height = 400;
+    const step = Math.min(260, 7 * rowHeight);
+    let top = 8000;
+    let previous = viewport.window(top, height, [], 'interactive');
+    for (const direction of [1, 1, 1, -1, -1, -1]) {
+      top += direction * step;
+      expect(previous.start * rowHeight).toBeLessThanOrEqual(top);
+      expect(previous.end * rowHeight).toBeGreaterThanOrEqual(top + height);
+      previous = viewport.window(top, height, [], 'interactive');
+      expect(previous.end - previous.start).toBeLessThanOrEqual(Math.ceil(height / rowHeight) + 26);
+    }
+  });
+
+  it('keeps two quick wheel steps actionable in a short asynchronous result list', () => {
+    const viewport = new RowViewport();
+    viewport.replace(
+      rows(
+        Array.from({ length: 500 }, (_, n) => String(n)),
+        38,
+      ),
+    );
+    const height = 288;
+    let top = 320;
+    for (const delta of [640, 640, -640, -640]) {
+      const previous = viewport.window(top, height, [], 'search');
+      top += delta;
+      expect(previous.start * 38).toBeLessThanOrEqual(top);
+      expect(previous.end * 38).toBeGreaterThanOrEqual(top + height);
+      expect(previous.end - previous.start).toBeLessThan(52);
+    }
+  });
+
+  it('covers jumps of more than a screen in both directions before the next render', () => {
+    const height = 933;
+    const viewport = new RowViewport(170, 400);
+    viewport.replace(
+      rows(
+        Array.from({ length: 4000 }, (_, n) => String(n)),
+        40,
+      ),
+    );
+    let top = 10000;
+    let previous = viewport.window(top, height, []);
+    for (const delta of [280, 700, 1100, 1100, -1100, -1100, -700, -280]) {
+      top += delta;
+      expect(previous.start * 40).toBeLessThanOrEqual(top);
+      expect(previous.end * 40).toBeGreaterThanOrEqual(top + height);
+      previous = viewport.window(top, height, []);
+      expect(previous.end - previous.start).toBeLessThan(130);
+    }
+  });
+
+  it('retains recently traversed rows for reversals and releases them on a distant jump', () => {
+    const viewport = new RowViewport(170, 400);
+    viewport.replace(
+      rows(
+        Array.from({ length: 4000 }, (_, n) => String(n)),
+        40,
+      ),
+    );
+    const origin = viewport.window(0, 933, [], 'history');
+    for (let top = 550; top <= 5500; top += 550) viewport.window(top, 933, [], 'history');
+    const back = viewport.window(0, 933, [], 'history');
+    expect(back.end).toBeGreaterThan(origin.end + 100);
+    for (let top = 0; top < 30000; top += 550) {
+      const window = viewport.window(top, 933, [], 'history');
+      expect(window.end - window.start).toBeLessThanOrEqual(256);
+    }
+    const jumped = viewport.window(100000, 933, [], 'history');
+    expect(jumped.start * 40).toBeGreaterThan(97000);
+    expect(jumped.end - jumped.start).toBeLessThan(130);
   });
 
   it('defers final clamping until window height is known after shrinking', () => {

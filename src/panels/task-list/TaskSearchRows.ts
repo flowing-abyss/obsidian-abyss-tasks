@@ -6,6 +6,7 @@ import type {
 import {
   TaskSearchError,
   nodeAtSearchAddress,
+  searchHydrationLimits,
   taskSearchAddressKey,
   type TaskNodeSnapshot,
   type TaskSearchAddress,
@@ -30,6 +31,7 @@ export interface TaskSearchRowsOptions {
   readonly search: TaskSearchApi;
   readonly onDateCapture?: DateGroupCapture;
   readonly scheduler: Pick<BrowserTaskScheduler, 'yield'>;
+  readonly visibleTimelineRows?: () => readonly string[];
   prepareDependencies(generation: number, signal: AbortSignal): Promise<void>;
   isCurrent(identity: TaskSearchRowsIdentity): boolean;
   mountCard(
@@ -98,6 +100,11 @@ export class TaskSearchRows {
   #revision = 0;
   #disposed = false;
   #pumping = false;
+  #mountPumpQueued = false;
+  readonly #finished = new Map<
+    MountedRow,
+    { receipt: Promise<TaskRenderOutcome>; outcome: TaskRenderOutcome }
+  >();
   #dependencies: Promise<void> | undefined;
   #batch:
     { readonly roots: readonly RootLease[]; readonly controller: AbortController } | undefined;
@@ -175,7 +182,7 @@ export class TaskSearchRows {
     };
     this.#mounted.set(row.key, mounted);
     this.#notify();
-    this.#pump();
+    this.#pumpAfterMount();
     let live = true;
     return {
       element,
@@ -196,7 +203,7 @@ export class TaskSearchRows {
         mounted.occurrence = next.task;
         this.#mounted.set(next.key, mounted);
         this.#notify();
-        this.#pump();
+        this.#pumpAfterMount();
       },
       destroy: () => {
         if (!live) return;
@@ -362,15 +369,16 @@ export class TaskSearchRows {
     }
     const occurrences = [...distinct.values()];
     const tasks: TaskNodeSnapshot[] = [];
-    for (let offset = 0; offset < occurrences.length; offset += 50) {
+    const limit = searchHydrationLimits.roots;
+    for (let offset = 0; offset < occurrences.length; offset += limit) {
       this.#check(identity, signal);
       const hits = await this.#options.search.resolveHits(
-        occurrences.slice(offset, offset + 50),
+        occurrences.slice(offset, offset + limit),
         signal,
       );
       this.#check(identity, signal);
       tasks.push(...hits.map((hit) => hit.task));
-      if (offset + 50 < occurrences.length) await this.#options.scheduler.yield(signal);
+      if (offset + limit < occurrences.length) await this.#options.scheduler.yield(signal);
     }
     this.#check(identity, signal);
     return tasks;
@@ -404,17 +412,17 @@ export class TaskSearchRows {
     if (signal.aborted) throw new TaskSearchError('aborted', 'Search row cancelled');
     if (!this.#current(identity)) throw new TaskSearchError('stale', 'Search rows replaced');
   }
+  #attached(row: MountedRow): boolean {
+    return (
+      row.element.isConnected &&
+      row.element.ownerDocument === row.document &&
+      row.document.defaultView === row.window &&
+      !row.document.hidden
+    );
+  }
   #eligible(row: MountedRow, styles?: Map<HTMLElement, boolean>): boolean {
-    const element = row.element;
-    if (
-      !element.isConnected ||
-      element.ownerDocument !== row.document ||
-      row.document.defaultView !== row.window ||
-      row.document.hidden ||
-      row.window === null
-    )
-      return false;
-    for (let node: HTMLElement | null = element; node !== null; node = node.parentElement) {
+    if (row.window === null || !this.#attached(row)) return false;
+    for (let node: HTMLElement | null = row.element; node !== null; node = node.parentElement) {
       if (!styleAllowsRow(row.window, node, styles)) return false;
     }
     return true;
@@ -545,6 +553,22 @@ export class TaskSearchRows {
     return roots;
   }
 
+  #hydrationBatch(): RootLease[] {
+    const visible = this.#options.visibleTimelineRows;
+    const limit = searchHydrationLimits.roots;
+    const pending = this.#pendingRoots(visible === undefined ? limit : this.#roots.size);
+    if (pending.length <= limit || visible === undefined) return pending;
+    // After a distant jump, overscan above the viewport can occupy the first batch.
+    const candidates = new Set(pending);
+    const ordered = new Set<RootLease>();
+    for (const key of visible()) {
+      const root = this.#mounted.get(key)?.root;
+      if (root !== undefined && candidates.has(root)) ordered.add(root);
+    }
+    for (const root of pending) ordered.add(root);
+    return [...ordered].slice(0, limit);
+  }
+
   #hasWork(): boolean {
     if (this.#pendingRoots(1).length > 0) return true;
     const styles = new Map<HTMLElement, boolean>();
@@ -558,6 +582,24 @@ export class TaskSearchRows {
         return true;
     }
     return false;
+  }
+  #pumpAfterMount(): void {
+    if (this.#options.visibleTimelineRows === undefined) {
+      this.#pump();
+      return;
+    }
+    // Timeline mounts the incoming window under hidden frames in one synchronous pass.
+    // mountedChanged can start hydration as soon as it publishes those frames.
+    if (this.#pumping || this.#mountPumpQueued) return;
+    this.#mountPumpQueued = true;
+    void Promise.resolve()
+      .then(() => {
+        this.#mountPumpQueued = false;
+        this.#pump();
+      })
+      .catch((error: unknown) => {
+        this.#options.reportFailure(error);
+      });
   }
   #pump(): void {
     if (this.#pumping || !this.#current() || !this.#hasWork()) return;
@@ -598,14 +640,16 @@ export class TaskSearchRows {
     }
   }
   async #hydrate(identity: TaskSearchRowsIdentity | undefined, signal: AbortSignal): Promise<void> {
-    await this.#options.scheduler.yield(signal);
+    // A warm Timeline window must paint its first batch before the next scroll frame.
+    if (this.#options.visibleTimelineRows === undefined || this.#dependencies === undefined)
+      await this.#options.scheduler.yield(signal);
     this.#check(identity, signal);
     if (this.#roots.size === 0 || identity === undefined) return;
     this.#dependencies ??= this.#options.prepareDependencies(identity.generation, signal);
     await this.#dependencies;
     this.#check(identity, signal);
     for (;;) {
-      const batch = this.#pendingRoots(50);
+      const batch = this.#hydrationBatch();
       if (batch.length === 0) break;
       const hits = await this.#hydrateBatch(batch, signal);
       if (hits === undefined) {
@@ -639,24 +683,58 @@ export class TaskSearchRows {
     receipt: Promise<TaskRenderOutcome>,
     outcome: TaskRenderOutcome,
   ): void {
-    if (
-      !this.#current() ||
-      this.#mounted.get(row.occurrence.key) !== row ||
-      row.receipt !== receipt ||
-      !this.#eligible(row)
-    )
-      return;
-    if (outcome.type === 'failed' && row.failure === undefined) {
-      row.failure = outcome;
-      row.card?.destroy();
-      row.card = undefined;
-      if (row.leased) this.#release(row.root);
-      row.leased = false;
-      this.#options.reportFailure(outcome.error);
+    if (!this.#current() || !this.#ownsReceipt(row, receipt)) return;
+    if (this.#finished.size === 0)
+      void Promise.resolve()
+        .then(() => {
+          this.#publishFinished();
+        })
+        .catch((error: unknown) => {
+          this.#options.reportFailure(error);
+        });
+    this.#finished.set(row, { receipt, outcome });
+  }
+
+  #publishFinished(): void {
+    const identity = this.#identity;
+    const styles = new Map<HTMLElement, boolean>();
+    const finished = [...this.#finished];
+    this.#finished.clear();
+    let changed = false;
+    for (const [row, { receipt, outcome }] of finished) {
+      if (!this.#current(identity)) return;
+      if (this.#publishReceipt(row, receipt, outcome, styles)) changed = true;
     }
-    if (outcome.type === 'ready') row.readyReceipt = receipt;
+    if (!changed || !this.#current(identity)) return;
     this.#options.refreshMeasurements();
     this.#notify();
+  }
+
+  #ownsReceipt(row: MountedRow, receipt: Promise<TaskRenderOutcome>): boolean {
+    return row.receipt === receipt && this.#mounted.get(row.occurrence.key) === row;
+  }
+
+  #publishReceipt(
+    row: MountedRow,
+    receipt: Promise<TaskRenderOutcome>,
+    outcome: TaskRenderOutcome,
+    styles: Map<HTMLElement, boolean>,
+  ): boolean {
+    if (!this.#ownsReceipt(row, receipt)) return false;
+    // The viewport checks geometry before measuring a finished Timeline card.
+    // Reading computed styles here would flush every async Markdown write.
+    const eligible =
+      outcome.type === 'ready' && this.#options.visibleTimelineRows !== undefined
+        ? this.#attached(row)
+        : this.#eligible(row, styles);
+    if (!eligible) return false;
+    if (outcome.type === 'failed' && row.failure === undefined) {
+      this.#failRow(row, outcome.error);
+      // The owner's failure callback can replace or hide the remaining cards.
+      styles.clear();
+    }
+    if (outcome.type === 'ready') row.readyReceipt = receipt;
+    return true;
   }
 
   #failRow(row: MountedRow, error: unknown): void {
@@ -687,12 +765,28 @@ export class TaskSearchRows {
     return this.#options.updateCard(row.card, task, row.occurrence) ?? row.card;
   }
 
+  *#paintableRows(styles?: Map<HTMLElement, boolean>): IterableIterator<MountedRow> {
+    for (const row of this.#mounted.values())
+      if (
+        row.dirty &&
+        row.root.task !== undefined &&
+        row.failure === undefined &&
+        this.#eligible(row, styles)
+      )
+        yield row;
+  }
+
   #paint(): void {
+    // Compact Timeline publishes a whole window. Read shared ancestor styles before
+    // its card mounts invalidate layout. Other owners can change visibility during a mount.
+    const ready =
+      this.#options.visibleTimelineRows === undefined
+        ? this.#paintableRows()
+        : [...this.#paintableRows(new Map())];
     let refresh = false;
-    for (const row of this.#mounted.values()) {
+    for (const row of ready) {
       const task = row.root.task;
-      if (!row.dirty || task === undefined || !this.#eligible(row) || row.failure !== undefined)
-        continue;
+      if (task === undefined || !this.#attached(row) || !this.#current()) continue;
       row.dirty = false;
       try {
         row.card = this.#paintCard(row, nodeAtSearchAddress(task, row.occurrence.address));

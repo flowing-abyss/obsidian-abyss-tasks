@@ -17,6 +17,7 @@ export class ProjectKanbanHoverViewport {
     this.#viewport = new ProjectKanbanColumnViewport({
       host,
       scroll: host,
+      dragging: () => true,
       reportFailure,
       mountedChanged() {},
       mount(parent, row) {

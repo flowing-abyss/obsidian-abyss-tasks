@@ -145,6 +145,7 @@ async function rowsHarness(
 async function measurementHarness(
   overrides: Partial<Omit<TaskSearchRowsOptions, 'refreshMeasurements'>> = {},
   count = 1,
+  scrollReservePx: number | 'interactive' = 0,
 ) {
   let refreshes = 0;
   let passes = 0;
@@ -158,16 +159,19 @@ async function measurementHarness(
   h.host.addClass('abyss-center-scroll');
   prepareTaskPanelViewport(h.host);
   const dimensions = vi.spyOn(h.host, 'clientWidth', 'get');
-  const surface: TaskListSurface<TaskSearchOccurrence> = new TaskListSurface<TaskSearchOccurrence>({
-    host: h.host,
-    scroll: h.host,
-    mount: (host, row) => h.owner.mount(host, row),
-    mountedChanged: () => {
-      passes++;
-      h.owner.mountedChanged(surface.mountedKeys());
+  const surface: TaskListSurface<TaskSearchOccurrence> = new TaskListSurface<TaskSearchOccurrence>(
+    {
+      host: h.host,
+      scroll: h.host,
+      mount: (host, row) => h.owner.mount(host, row),
+      mountedChanged: () => {
+        passes++;
+        h.owner.mountedChanged(surface.mountedKeys());
+      },
+      reportFailure: h.failure,
     },
-    reportFailure: h.failure,
-  });
+    scrollReservePx,
+  );
   const presentation = {
     revision: 'receipt',
     preserveAnchor: false,
@@ -233,6 +237,175 @@ it('shares one detached root across occurrences, bounds more than 50 demanded ro
   });
   h.dispose();
 });
+it('stops mounting ordinary search cards when the first card hides its pane', async () => {
+  const admitted: string[] = [];
+  const h = await rowsHarness(4, {
+    mountCard: (element, task) => {
+      admitted.push(task.node.title);
+      element.parentElement?.hide();
+      return {
+        element,
+        settled: Promise.resolve({ type: 'ready' }),
+        accepts: () => true,
+        update: () => {},
+        destroy: () => {},
+      };
+    },
+  });
+  try {
+    for (const row of h.rows.slice(0, 4)) h.owner.mount(h.host, row);
+    await flushMicrotasks(100);
+    expect(admitted).toEqual(['Root 0']);
+  } finally {
+    h.dispose();
+  }
+});
+it('reads row visibility before writing a batch of Timeline cards', async () => {
+  const styleReads = vi.spyOn(window, 'getComputedStyle');
+  const readsAtMount: number[] = [];
+  const h = await rowsHarness(12, {
+    visibleTimelineRows: () => [],
+    mountCard: (element, task) => {
+      readsAtMount.push(styleReads.mock.calls.length);
+      element.textContent = task.node.title;
+      return {
+        element,
+        settled: Promise.resolve({ type: 'ready' }),
+        accepts: () => true,
+        update: () => {},
+        destroy: () => {
+          element.remove();
+        },
+      };
+    },
+  });
+  try {
+    for (const row of h.rows.slice(0, 12)) h.owner.mount(h.host, row);
+    await h.owner.settleMounted(h.identity.signal);
+    await vi.waitFor(() => {
+      expect(readsAtMount).toHaveLength(12);
+    });
+    expect(new Set(readsAtMount).size).toBe(1);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('records a finished Timeline card without forcing synchronous style resolution after Markdown writes', async () => {
+  const receipt = deferred<TaskRenderOutcome>();
+  const h = await rowsHarness(1, {
+    visibleTimelineRows: () => [],
+    mountCard: (element) => ({
+      element,
+      settled: receipt.promise,
+      accepts: () => true,
+      update: () => {},
+      destroy: () => {},
+    }),
+  });
+  try {
+    const mount = h.owner.mount(h.host, expectDefined(h.rows.rowAt(0)));
+    await flushMicrotasks(80);
+    const styles = vi.spyOn(window, 'getComputedStyle');
+    receipt.resolve({ type: 'ready' });
+    await flushMicrotasks();
+    expect(mount.measurementReady?.()).toBe(true);
+    expect(styles).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('publishes one geometry update for a batch of completed Timeline cards', async () => {
+  const refreshMeasurements = vi.fn();
+  const h = await rowsHarness(12, { visibleTimelineRows: () => [], refreshMeasurements });
+  try {
+    for (const row of h.rows.slice(0, 12)) h.owner.mount(h.host, row);
+    h.owner.mountedChanged(taskKeys(h.rows));
+    expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
+    await flushMicrotasks();
+    expect(refreshMeasurements).toHaveBeenCalledTimes(1);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('defers timeline admission checks until the mounted window is published', async () => {
+  const h = await rowsHarness(31, { visibleTimelineRows: () => [] });
+  try {
+    const first = expectDefined(h.rows.rowAt(0));
+    h.owner.mount(h.host, first);
+    await h.owner.settleRow(first.key, h.identity.signal);
+    await flushMicrotasks();
+    const read = vi.spyOn(h.index, 'resolveSearchHits');
+    const styles = vi.spyOn(window, 'getComputedStyle');
+    const staging = h.host.createDiv();
+    staging.hidden = true;
+    const mounts = Array.from(h.rows.slice(1, 31), (row) => {
+      const frame = staging.createDiv({ cls: 'abyss-virtual-row-frame' });
+      frame.hidden = true;
+      return { frame, mount: h.owner.mount(frame, row) };
+    });
+    expect(styles).not.toHaveBeenCalled();
+    for (const { frame } of mounts) {
+      h.host.appendChild(frame);
+      frame.hidden = false;
+    }
+    staging.remove();
+    h.owner.mountedChanged(taskKeys(h.rows));
+    expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
+    expect(read.mock.calls.map(([hits]) => hits.length)).toEqual([30]);
+    expect(mounts.every(({ mount }) => !mount.element.inert)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+it('hydrates the next timeline window before another browser task once dependencies are ready', async () => {
+  const hold = deferred<void>();
+  const schedule = vi.fn(async () => {});
+  const h = await rowsHarness(3, { scheduler: { yield: schedule }, visibleTimelineRows: () => [] });
+  try {
+    const first = expectDefined(h.rows.rowAt(0));
+    h.owner.mount(h.host, first);
+    await h.owner.settleRow(first.key, h.identity.signal);
+    await flushMicrotasks();
+    schedule.mockImplementation(() => hold.promise);
+    const read = vi.spyOn(h.index, 'resolveSearchHits');
+    const next = Array.from(h.rows.slice(1, 3), (row) => h.owner.mount(h.host, row));
+    await flushMicrotasks();
+    expect(read.mock.calls.map(([hits]) => hits.length)).toEqual([2]);
+    expect(next.every(({ element }) => !element.inert)).toBe(true);
+  } finally {
+    hold.resolve();
+    h.dispose();
+  }
+});
+it('hydrates visible timeline titles before overscan on a distant jump in a tall window', async () => {
+  const hold = deferred<void>();
+  const schedule = vi.fn(async () => {});
+  const visible: string[] = [];
+  const h = await rowsHarness(77, {
+    scheduler: { yield: schedule },
+    visibleTimelineRows: () => visible,
+  });
+  try {
+    const first = expectDefined(h.rows.rowAt(0));
+    h.owner.mount(h.host, first);
+    await h.owner.settleRow(first.key, h.identity.signal);
+    await flushMicrotasks();
+    schedule.mockImplementation(() => hold.promise);
+    const next = Array.from(h.rows.slice(1, 77), (row, index) => {
+      if (index >= 20 && index < 56) visible.push(row.key);
+      return h.owner.mount(h.host, row);
+    });
+    await flushMicrotasks();
+    expect(next.slice(20, 56).every(({ element }) => !element.inert)).toBe(true);
+    expect(next.filter(({ element }) => !element.inert)).toHaveLength(50);
+  } finally {
+    hold.resolve();
+    h.dispose();
+  }
+});
 it('reads a shared ancestor once when selecting a batch and rechecks it after hydration', async () => {
   const dependencies = deferred<void>();
   const entered = deferred<void>();
@@ -268,6 +441,75 @@ it('reads a shared ancestor once when selecting a batch and rechecks it after hy
     h.dispose();
   }
 });
+it.each(['document', 'collapsed pane', 'invisible pane'] as const)(
+  'resumes hydration in the same Timeline range when the %s becomes visible',
+  async (target) => {
+    const h = await rowsHarness(2, { visibleTimelineRows: () => [] });
+    prepareTaskPanelViewport(h.host);
+    const read = h.index.resolveSearchHits.bind(h.index);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    vi.spyOn(h.index, 'resolveSearchHits').mockImplementationOnce(async (hits, signal) => {
+      const result = await read(hits, signal);
+      entered.resolve();
+      await release.promise;
+      return result;
+    });
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const rows = h.host.createDiv();
+    vi.spyOn(rows, 'clientWidth', 'get').mockImplementation(() =>
+      h.host.hidden === true ? 0 : 700,
+    );
+    const surface = new TaskListSurface<TaskSearchOccurrence>(
+      {
+        host: rows,
+        scroll: h.host,
+        viewportInsetElement: h.host.createDiv(),
+        stagedMounts: 'detached',
+        mount: (host, row) => h.owner.mount(host, row),
+        mountedChanged: () => {
+          h.owner.mountedChanged(surface.mountedKeys());
+        },
+        reportFailure: h.failure,
+      },
+      'timeline',
+    );
+    const setHidden = (value: boolean): void => {
+      if (target === 'collapsed pane') h.host.hidden = value;
+      else if (target === 'invisible pane') h.host.style.visibility = value ? 'hidden' : '';
+      else {
+        hidden.mockReturnValue(value);
+        document.dispatchEvent(new Event('visibilitychange'));
+      }
+    };
+    try {
+      surface.update(h.rows, {
+        revision: 'visibility',
+        preserveAnchor: false,
+        estimate: () => 64,
+        measurementRevision: (row) => row.key,
+      });
+      await entered.promise;
+      const first = expectDefined(surface.element('many.md:0'));
+      setHidden(true);
+      release.resolve();
+      await flushMicrotasks(60);
+      expect(first.inert).toBe(true);
+      expect(h.mounted).toHaveLength(0);
+      setHidden(false);
+      await Promise.resolve();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      await flushMicrotasks(60);
+      expect(first.inert).toBe(false);
+      expect(surface.element('many.md:0')).toBe(first);
+      expect(h.mounted.map((task) => task.title)).toEqual(['Root 0', 'Root 1']);
+    } finally {
+      release.resolve();
+      surface.destroy();
+      h.dispose();
+    }
+  },
+);
 it('skips queued evicted roots and cancels a never-mounted row wait on dispose', async () => {
   const h = await rowsHarness(2);
   const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
@@ -578,33 +820,40 @@ it('reconciles a cancelled current receipt without admitting its provisional hei
   }
 });
 
-it('reconciles a synchronous paint failure after its old card detaches the holder', async () => {
-  const error = new Error('update failed');
-  const h = await measurementHarness({
-    updateCard: () => {
-      throw error;
-    },
-  });
-  try {
-    expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
-    await flushMicrotasks(40);
-    const card = expectDefined(h.surface.element('many.md:0'));
-    const frame = expectDefined(card.parentElement);
-    h.resetMeasurements();
-    h.surface.update(h.rows, { ...h.presentation, revision: 'failed-paint' });
-    await flushMicrotasks(40);
-    expect(h.refreshes).toBe(1);
-    expect(h.failure).toHaveBeenCalledExactlyOnceWith(error);
-    expect(await h.owner.settleRow('many.md:0', h.identity.signal)).toEqual({
-      type: 'failed',
-      error,
-    });
-    expect(card.parentElement).toBe(frame);
-    expect(frame.getBoundingClientRect().height).toBe(64);
-  } finally {
-    h.dispose();
-  }
-});
+it.each([0, 'interactive'] as const)(
+  'reconciles a synchronous paint failure after its old card detaches the holder with %s buffering',
+  async (buffer) => {
+    const error = new Error('update failed');
+    const h = await measurementHarness(
+      {
+        updateCard: () => {
+          throw error;
+        },
+      },
+      1,
+      buffer,
+    );
+    try {
+      expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
+      await flushMicrotasks(40);
+      const card = expectDefined(h.surface.element('many.md:0'));
+      const frame = expectDefined(card.parentElement);
+      h.resetMeasurements();
+      h.surface.update(h.rows, { ...h.presentation, revision: 'failed-paint' });
+      await flushMicrotasks(40);
+      expect(h.refreshes).toBe(1);
+      expect(h.failure).toHaveBeenCalledExactlyOnceWith(error);
+      expect(await h.owner.settleRow('many.md:0', h.identity.signal)).toEqual({
+        type: 'failed',
+        error,
+      });
+      expect(card.parentElement).toBe(frame);
+      expect(frame.getBoundingClientRect().height).toBe(64);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 
 it.each(['hydration', 'dependencies'] as const)(
   'reconciles cleared demand holders after a live %s failure',
@@ -653,6 +902,39 @@ it('fails a current card mount once and never completes its row as ready', async
   });
   expect(h.failure).toHaveBeenCalledExactlyOnceWith(error);
   h.dispose();
+});
+it('drops later failures from a render batch when the first failure closes the surface', async () => {
+  const receipt = deferred<TaskRenderOutcome>();
+  const error = new Error('render failed');
+  const report = vi.fn();
+  const refresh = vi.fn();
+  const h = await rowsHarness(2, {
+    mountCard: (element) => ({
+      element,
+      settled: receipt.promise,
+      accepts: () => true,
+      update: () => {},
+      destroy: () => {
+        element.remove();
+      },
+    }),
+    reportFailure: report,
+    refreshMeasurements: refresh,
+  });
+  try {
+    report.mockImplementation(() => {
+      h.owner.dispose();
+    });
+    const mounts = [...h.rows.slice(0, 2)].map((row) => h.owner.mount(h.host, row));
+    await flushMicrotasks(60);
+    expect(mounts.every(({ element }) => !element.inert)).toBe(true);
+    receipt.resolve({ type: 'failed', error });
+    await flushMicrotasks();
+    expect(report).toHaveBeenCalledExactlyOnceWith(error);
+    expect(refresh).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
 });
 it('cancels old zero and nonzero mounted joins on identity replacement', async () => {
   const h = await rowsHarness(1);

@@ -108,7 +108,7 @@ export function patchTimelineGrid(grid: HTMLElement, layout: ProjectTimelineAxis
   const boundaries = layout.gridBoundaries;
   while (grid.children.length > boundaries.length) grid.lastElementChild?.remove();
   while (grid.children.length < boundaries.length) {
-    grid.createSpan({ cls: 'abyss-project-timeline-gridline' });
+    grid.appendChild(grid.ownerDocument.createElement('span'));
   }
   for (const [index, boundary] of boundaries.entries()) {
     const line = grid.children.item(index);

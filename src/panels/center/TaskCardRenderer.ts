@@ -122,6 +122,7 @@ interface TaskCardFlags {
   readonly reportFailure?: ((error: unknown) => void) | undefined;
 }
 export interface TaskCardMount {
+  readonly committedSynchronously?: boolean;
   readonly settled: Promise<TaskRenderOutcome>;
   readonly element: HTMLElement;
   accepts(task: TaskSnapshot, flags: TaskCardFlags): boolean;
@@ -139,6 +140,7 @@ interface CardState {
   readonly flags: TaskCardFlags;
 }
 interface CardContents {
+  readonly committedSynchronously: boolean;
   readonly settled: Promise<TaskRenderOutcome>;
   update(current: CardState): void;
   destroy(): void;
@@ -254,12 +256,12 @@ function settleCardFields(
   context: CardContentContext,
   updates: readonly PreparedTaskTextUpdate[],
   tree: Promise<TaskRenderOutcome> | undefined,
-): TaskTextRender {
+): TaskTextRender & { readonly committedSynchronously: boolean } {
   const commitFields = (): boolean => {
     if (!updates.every((update) => update.canCommit())) return false;
     return updates.every((update) => update.commit());
   };
-  commitFields();
+  const committedSynchronously = commitFields() && tree === undefined;
   let done = false;
   let ready = false;
   let resolve!: (outcome: TaskRenderOutcome) => void;
@@ -298,6 +300,7 @@ function settleCardFields(
   }, failed);
   return {
     settled,
+    committedSynchronously,
     cancel: () => {
       for (const update of updates) update.cancel();
       finish({ type: 'cancelled' });
@@ -397,6 +400,9 @@ export class TaskCardRenderer {
     return {
       element: card,
       accepts: (task, flags) => live && this.#sameOccurrence(current, { task, flags }),
+      get committedSynchronously() {
+        return content.committedSynchronously;
+      },
       get settled() {
         return content.settled;
       },
@@ -490,6 +496,9 @@ export class TaskCardRenderer {
     const text = this.#mountCardText(card, context, { title, description, searchContexts });
     const header = this.#mountHeader(card, context, { mainRow, titleRow, title });
     return {
+      get committedSynchronously() {
+        return text.committedSynchronously;
+      },
       get settled() {
         return text.settled;
       },
@@ -613,7 +622,11 @@ export class TaskCardRenderer {
     const title = new RetainedTaskText(hosts.title, context.component);
     let description = new RetainedTaskText(hosts.description, context.component);
     let tree: TaskSearchTreeMount | undefined;
-    let receipt: TaskTextRender = { settled: Promise.resolve({ type: 'ready' }), cancel: () => {} };
+    let receipt: ReturnType<typeof settleCardFields> = {
+      committedSynchronously: false,
+      settled: Promise.resolve({ type: 'ready' }),
+      cancel: () => {},
+    };
     const searchDescription = (current: CardState, search: TaskCardSearchPresentation): void => {
       hosts.description.className = 'abyss-search-contexts';
       hosts.description.hidden = false;
@@ -642,6 +655,9 @@ export class TaskCardRenderer {
       return description.prepare(this.#retainedTextInput(current, context, 'description'));
     };
     return {
+      get committedSynchronously() {
+        return receipt.committedSynchronously;
+      },
       get settled() {
         return receipt.settled;
       },

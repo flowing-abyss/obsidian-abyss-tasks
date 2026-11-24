@@ -36,11 +36,37 @@ function rows(count: number, prefix = 'Task') {
     { by: 'none' },
   );
 }
-function harness(clampWrites = false, sameHost = false, clampExtent = false, viewportInset = 0) {
+function paneOptions(
+  scroll: HTMLElement,
+  options: { observePane: boolean; stagedMounts: 'detached' | undefined },
+) {
+  return {
+    ...(options.observePane && { viewportInsetElement: scroll.createDiv() }),
+    ...(options.stagedMounts !== undefined && { stagedMounts: options.stagedMounts }),
+  };
+}
+function harness(
+  clampWrites = false,
+  sameHost = false,
+  clampExtent = false,
+  {
+    viewportInset = 0,
+    scrollReservePx = 0,
+    stagedMounts,
+    observePane = false,
+  }: {
+    viewportInset?: number;
+    scrollReservePx?: number | 'interactive' | 'search' | 'timeline';
+    stagedMounts?: 'detached';
+    observePane?: boolean;
+  } = {},
+) {
   const scroll = freshContainer();
   document.body.append(scroll);
   Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
   const host = sameHost ? scroll : scroll.createDiv();
+  const pane = paneOptions(scroll, { observePane, stagedMounts });
+  let inset = viewportInset;
   const frames = new Map<number, FrameRequestCallback>();
   let next = 0;
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
@@ -174,16 +200,24 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false, vie
   });
   const reportFailure = vi.fn();
   const mountedChanged = vi.fn();
-  const surface = new TaskListSurface({
-    viewportInset: () => viewportInset,
-    host,
-    scroll,
-    mount,
-    mountedChanged,
-    reportFailure,
-  });
+  const surface = new TaskListSurface(
+    {
+      viewportInset: () => inset,
+      ...pane,
+      host,
+      scroll,
+      mount,
+      mountedChanged,
+      reportFailure,
+    },
+    scrollReservePx,
+  );
   return {
     host,
+    axis: pane.viewportInsetElement,
+    inset(value: number) {
+      inset = value;
+    },
     style(
       property:
         | 'paddingTop'
@@ -1033,10 +1067,14 @@ describe('surface transaction admission', () => {
     },
   );
 
-  it.each(['update', 'destroy'] as const)(
-    'stops row work when a retained mount %s hides the surface',
-    (operation) => {
-      const h = harness();
+  it.each([
+    ['update', 0],
+    ['destroy', 0],
+    ['destroy', 400],
+  ] as const)(
+    'stops row work when a retained mount %s hides the surface with reserve %s',
+    (operation, scrollReservePx) => {
+      const h = harness(false, false, false, { scrollReservePx });
       h.surface.update(rows(100), presentation);
       const mounts = h.mount.mock.results.map(
         (result) => result.value as ReturnType<typeof h.mount>,
@@ -1255,7 +1293,11 @@ describe('surface transaction admission', () => {
       if (phase === 'beforeWrite') {
         expect(firstAfter).not.toHaveBeenCalled();
         expect(laterBefore).not.toHaveBeenCalled();
-      } else expect(firstAfter).toHaveBeenCalledTimes(1);
+      } else {
+        expect(firstAfter).toHaveBeenCalledTimes(1);
+        expect(h.surface.mountedKeys()).toContain('n.md:99');
+        expect([...h.surface.cards()].map(([key]) => key)).toEqual(h.surface.mountedKeys());
+      }
       release();
       releaseLater();
       h.size(600, 480);
@@ -1757,6 +1799,645 @@ it('rebinds adopted task rows and cancels old native work before disposing new-o
   expect(h.observed.size).toBe(0);
   expect(h.host.children).toHaveLength(0);
   expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it('stages incoming and retiring ordinary cards in one connected hidden container per scroll', () => {
+  const h = harness(false, false, false, { scrollReservePx: 400 });
+  const original = expectDefined(h.mount.getMockImplementation());
+  const mounts: HTMLElement[] = [];
+  const evictions: HTMLElement[] = [];
+  h.mount.mockImplementation((host, row) => {
+    mounts.push(expectDefined(host.parentElement));
+    const mounted = original(host, row);
+    return {
+      ...mounted,
+      destroy: () => {
+        evictions.push(expectDefined(host.parentElement));
+        mounted.destroy();
+      },
+    };
+  });
+  h.surface.update(rows(1000), presentation);
+  mounts.length = 0;
+  h.scrollTo(4800);
+  h.frame();
+  expect(mounts.length).toBeGreaterThan(4);
+  expect(evictions.length).toBeGreaterThan(4);
+  const stage = expectDefined(mounts[0]);
+  expect(new Set([...mounts, ...evictions])).toEqual(new Set([stage]));
+  expect(stage.hidden).toBe(true);
+  expect(stage.isConnected).toBe(false);
+  expect(h.surface.element('n.md:100')?.parentElement?.parentElement).toBe(h.host);
+  h.surface.destroy();
+});
+
+it.each([false, true])(
+  'keeps published spacers and valid keys when a scroll eviction hides the panel (detached=%s)',
+  (detached) => {
+    const h = harness(true, false, true, {
+      scrollReservePx: 400,
+      ...(detached && { stagedMounts: 'detached' }),
+    });
+    h.surface.update(rows(1000), presentation);
+    h.scrollTo(24000);
+    h.frame();
+    const spacers = () =>
+      [...h.host.querySelectorAll<HTMLElement>(':scope > .abyss-virtual-row-spacer')].map((node) =>
+        node.style.getPropertyValue('--abyss-virtual-row-height'),
+      );
+    const before = spacers();
+    const key = expectDefined(h.surface.mountedKeys()[0]);
+    const retiring = h.mount.mock.results
+      .map((result) => result.value as ReturnType<typeof h.mount>)
+      .find((mount) => mount.element === h.surface.element(key));
+    const mounted = expectDefined(retiring);
+    const destroy = mounted.destroy;
+    vi.spyOn(mounted, 'destroy').mockImplementationOnce(() => {
+      destroy();
+      h.size(0, 480);
+    });
+    h.scrollTo(36000);
+    h.frame();
+    expect(h.scroll.scrollTop).toBe(36000);
+    expect(spacers()).toEqual(before);
+    expect(
+      h.surface.mountedKeys().every((row) => h.surface.element(row)?.isConnected === true),
+    ).toBe(true);
+    h.size(600, 480);
+    h.surface.resume();
+    expect(h.surface.element('n.md:750')?.isConnected).toBe(true);
+    h.surface.destroy();
+  },
+);
+
+it('builds compact Timeline rows off-document and publishes them before hydration', () => {
+  const h = harness(false, false, false, { scrollReservePx: 'timeline', stagedMounts: 'detached' });
+  const original = expectDefined(h.mount.getMockImplementation());
+  let dirty = false;
+  let forcedReads = 0;
+  h.onLayoutRead(() => {
+    if (dirty) forcedReads++;
+    dirty = false;
+  });
+  h.mount.mockImplementation((frame, row) => {
+    const mount = original(frame, row);
+    dirty ||= frame.isConnected;
+    return {
+      ...mount,
+      destroy: () => {
+        dirty ||= frame.isConnected;
+        mount.destroy();
+      },
+    };
+  });
+  try {
+    h.surface.update(rows(1000), presentation);
+    forcedReads = 0;
+    h.mountedChanged.mockClear();
+    h.scroll.dispatchEvent(new WheelEvent('wheel', { cancelable: true, deltaY: 14400 }));
+    expect(forcedReads).toBe(0);
+    expect(h.mountedChanged).toHaveBeenCalled();
+    for (const key of h.surface.mountedKeys()) {
+      const element = expectDefined(h.surface.element(key));
+      expect(element.isConnected).toBe(true);
+      expect(element.closest('[hidden]')).toBeNull();
+    }
+    expect(h.surface.element('n.md:305')?.textContent).toBe('Task 305');
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('immediately interrupts detached Timeline mounts if the application hides its live host', () => {
+  const h = harness(false, false, false, { scrollReservePx: 'timeline', stagedMounts: 'detached' });
+  const original = expectDefined(h.mount.getMockImplementation());
+  h.mount.mockImplementation((frame, row) => {
+    const mount = original(frame, row);
+    h.size(0, 0);
+    return mount;
+  });
+  try {
+    h.surface.update(rows(100), presentation);
+    expect(h.mount).toHaveBeenCalledTimes(1);
+    expect(h.surface.mountedKeys()).toEqual([]);
+    expect(h.host.querySelector('.abyss-virtual-row-frame')).toBeNull();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('reuses observed compact Timeline pane dimensions in row admission and receipt scheduling', () => {
+  const h = harness(false, false, false, {
+    scrollReservePx: 'timeline',
+    stagedMounts: 'detached',
+    observePane: true,
+  });
+  try {
+    h.surface.update(rows(2000), presentation);
+    const reads = vi.fn();
+    h.onLayoutRead(reads);
+    h.scroll.dispatchEvent(new WheelEvent('wheel', { cancelable: true, deltaY: 14400 }));
+    expect(h.surface.element('n.md:305')?.isConnected).toBe(true);
+    expect(reads.mock.calls.length).toBeLessThanOrEqual(10);
+    reads.mockClear();
+    for (let i = 0; i < 50; i++) h.surface.refreshMeasurements();
+    expect(reads).not.toHaveBeenCalled();
+    h.frame();
+    expect(reads.mock.calls.length).toBeLessThanOrEqual(5);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+function observedTimelinePane() {
+  return harness(false, false, false, {
+    scrollReservePx: 'timeline',
+    stagedMounts: 'detached',
+    observePane: true,
+  });
+}
+
+it('retires a compact Timeline mount immediately when an ancestor hides the pane, then wakes on showing it', async () => {
+  const h = observedTimelinePane();
+  const pane = document.body.createDiv();
+  pane.appendChild(h.scroll);
+  const original = expectDefined(h.mount.getMockImplementation());
+  h.mount.mockImplementationOnce((frame, row) => {
+    const mount = original(frame, row);
+    h.size(0, 0);
+    pane.hidden = true;
+    return mount;
+  });
+  try {
+    h.surface.update(rows(1000), presentation);
+    expect(h.mount).toHaveBeenCalledTimes(1);
+    expect(h.surface.mountedKeys()).toEqual([]);
+    h.size(600, 480);
+    pane.hidden = false;
+    await Promise.resolve();
+    h.frame();
+    expect(h.surface.element('n.md:5')?.isConnected).toBe(true);
+  } finally {
+    h.surface.destroy();
+    pane.remove();
+  }
+});
+
+it('refreshes compact Timeline geometry for the pane, sticky axis, restored width and owner visibility', () => {
+  const h = observedTimelinePane();
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  try {
+    h.surface.update(rows(1000), presentation);
+    expect(h.observed).toContain(h.axis);
+    const opening = h.surface.mountedKeys().length;
+    h.size(600, 960);
+    h.resize();
+    h.frame();
+    const expanded = h.surface.mountedKeys().length;
+    expect(expanded).toBeGreaterThan(opening);
+    h.inset(480);
+    h.resize();
+    h.frame();
+    expect(h.surface.mountedKeys().length).toBeLessThan(expanded);
+    h.size(0, 960);
+    h.resize();
+    expect(h.surface.reveal('n.md:200')).toBeUndefined();
+    h.size(600, 960);
+    h.surface.suspend(true);
+    hidden.mockReturnValue(true);
+    h.surface.resume();
+    expect(h.surface.mountedKeys()).toEqual([]);
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    h.frame();
+    expect(h.surface.reveal('n.md:200')?.isConnected).toBe(true);
+  } finally {
+    h.surface.destroy();
+    hidden.mockRestore();
+  }
+});
+
+it('rebinds the observed compact Timeline pane on adoption and ignores the previous owner resize', () => {
+  const h = observedTimelinePane();
+  const owner = taskViewportOwner();
+  // The mock installs Obsidian's DOM helpers only on the main realm.
+  vi.spyOn(owner.doc, 'createElement').mockImplementation((tag, options) =>
+    owner.doc.adoptNode(document.createElement(tag, options)),
+  );
+  try {
+    h.surface.update(rows(1000), presentation);
+    const oldResize = h.resizeCallback();
+    owner.doc.body.append(h.scroll);
+    h.size(650, 720);
+    h.surface.refreshMeasurements();
+    owner.flush();
+    expect(owner.observers.some((o) => o.elements.has(expectDefined(h.axis)))).toBe(true);
+    oldResize([], {} as ResizeObserver);
+    expect(owner.frames.size).toBe(0);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    expect(h.surface.reveal('n.md:250')?.ownerDocument).toBe(owner.doc);
+  } finally {
+    h.surface.destroy();
+    owner.destroy();
+  }
+});
+
+it.each([false, true])(
+  'returns a staged row to its host when a retiring neighbor pins and reveals it (detached=%s)',
+  (detached) => {
+    const h = harness(false, false, false, {
+      scrollReservePx: 400,
+      ...(detached && { stagedMounts: 'detached' }),
+    });
+    h.surface.update(rows(1000), presentation);
+    const retained = expectDefined(h.surface.element('n.md:2'));
+    const first = expectDefined(h.mount.mock.results[0]).value as ReturnType<typeof h.mount>;
+    const destroy = first.destroy;
+    let release: (() => void) | undefined;
+    vi.spyOn(first, 'destroy').mockImplementationOnce(() => {
+      destroy();
+      release = h.surface.pin('n.md:2');
+      h.surface.reveal('n.md:2');
+    });
+    h.scrollTo(4800);
+    h.frame();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    expect(h.surface.element('n.md:2')).toBe(retained);
+    expect(retained.parentElement?.parentElement).toBe(h.host);
+    expect(h.surface.mountedKeys()).toContain('n.md:2');
+    release?.();
+    h.surface.destroy();
+  },
+);
+
+it('keeps the opening window small when the list appears under a stationary pointer', () => {
+  const h = harness(false, false, false, { scrollReservePx: 400 });
+  h.surface.update(rows(1000), presentation);
+  const opening = h.surface.mountedKeys();
+  h.scroll.dispatchEvent(new Event('pointerenter'));
+  h.frame();
+  expect(h.surface.mountedKeys()).toEqual(opening);
+  h.surface.destroy();
+});
+
+it('warms an idle ordinary list after opening and cancels old-owner work on suspension', () => {
+  vi.useFakeTimers();
+  const h = harness(false, false, false, { scrollReservePx: 400 });
+  try {
+    h.surface.update(rows(1000), presentation);
+    const initial = h.surface.mountedKeys().length;
+    vi.advanceTimersByTime(400);
+    h.frame();
+    expect(h.surface.mountedKeys().length).toBeGreaterThan(initial);
+    h.surface.suspend();
+    h.surface.resume();
+    h.surface.suspend();
+    h.mountedChanged.mockClear();
+    vi.advanceTimersByTime(400);
+    h.frame();
+    expect(h.mountedChanged).not.toHaveBeenCalled();
+  } finally {
+    h.surface.destroy();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps the mounted list intact while a scroll stays inside its reserve', () => {
+  const h = harness(false, false, false, { scrollReservePx: 400 });
+  h.surface.update(rows(1000), presentation);
+  h.mountedChanged.mockClear();
+  h.scrollTo(80);
+  h.frame();
+  expect(h.mountedChanged).not.toHaveBeenCalled();
+  h.scrollTo(1200);
+  h.frame();
+  expect(h.mountedChanged).toHaveBeenCalled();
+  expect(h.surface.element('n.md:25')?.isConnected).toBe(true);
+  h.surface.destroy();
+});
+
+it('reuses settled Timeline geometry on a native scroll and measures coalesced resize or receipt work', async () => {
+  const h = observedTimelinePane();
+  try {
+    h.surface.update(rows(1000), presentation);
+    h.frame();
+    const keys = h.surface.mountedKeys();
+    const measure = vi.fn();
+    h.onMeasure(measure);
+    h.scrollTo(48);
+    h.frame();
+    expect(h.surface.mountedKeys()).toEqual(keys);
+    expect(measure).not.toHaveBeenCalled();
+
+    h.heights.set('n.md:0', 72);
+    h.scrollTo(96);
+    h.resize();
+    h.frame();
+    expect(h.scroll.scrollTop).toBe(120);
+    measure.mockClear();
+    h.heights.set('n.md:0', 84);
+    h.surface.refreshMeasurements();
+    h.scrollTo(144);
+    await Promise.resolve();
+    expect(h.scroll.scrollTop).toBe(156);
+    expect(measure).toHaveBeenCalled();
+
+    measure.mockClear();
+    h.scrollTo(1200);
+    h.frame();
+    expect(h.surface.mountedKeys()).not.toEqual(keys);
+    expect(measure).toHaveBeenCalled();
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('keeps taps and horizontal gestures cold, then covers the first vertical reversal', () => {
+  vi.useFakeTimers();
+  const h = harness(false, false, false, { scrollReservePx: 'interactive' });
+  try {
+    h.surface.update(rows(1000), presentation);
+    const cold = h.surface.mountedKeys();
+    vi.advanceTimersByTime(500);
+    h.frame();
+    expect(h.surface.mountedKeys()).toEqual(cold);
+    h.scroll.dispatchEvent(new TouchEvent('touchstart'));
+    h.scroll.dispatchEvent(new WheelEvent('wheel', { deltaX: 160 }));
+    h.frame();
+    expect(h.surface.mountedKeys()).toEqual(cold);
+    h.scroll.dispatchEvent(new WheelEvent('wheel', { deltaY: 180 }));
+    h.frame();
+    expect(h.surface.mountedKeys().length).toBeGreaterThan(cold.length);
+    h.scrollTo(1920);
+    h.frame();
+    const clicked = expectDefined(h.surface.element('n.md:36'));
+    h.scrollTo(1680);
+    expect(h.surface.reveal('n.md:36')).toBe(clicked);
+    expect(h.surface.mountedKeys().length).toBeLessThan(40);
+  } finally {
+    h.surface.destroy();
+    vi.useRealTimers();
+  }
+});
+
+it('publishes clickable canonical Timeline rows before a large wheel handler returns', () => {
+  const h = harness(false, false, false, { scrollReservePx: 'timeline' });
+  const selected = vi.fn();
+  try {
+    h.surface.update(rows(1000), presentation);
+    const measure = vi.fn();
+    h.onMeasure(measure);
+    for (const [dy, key] of [
+      [14400, 'n.md:305'],
+      [-9600, 'n.md:105'],
+    ] as const) {
+      expect(h.surface.element(key)).toBeUndefined();
+      const event = new WheelEvent('wheel', { cancelable: true, deltaY: dy });
+      h.scroll.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      const row = expectDefined(h.surface.element(key));
+      expect(row.isConnected).toBe(true);
+      expect(row.closest('[hidden]')).toBeNull();
+      row.addEventListener('click', () => {
+        selected(key);
+      });
+      row.click();
+      expect(selected).toHaveBeenLastCalledWith(key);
+    }
+    expect(measure).not.toHaveBeenCalled();
+    h.frame();
+    expect(measure).toHaveBeenCalled();
+    expect(h.surface.element('n.md:105')?.isConnected).toBe(true);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('publishes only the visible destination and a small margin throughout repeated multi-screen Timeline jumps', () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const h = harness(false, false, false, { scrollReservePx: 'timeline', stagedMounts: 'detached' });
+  try {
+    h.surface.update(rows(2000), presentation);
+    let visible: HTMLElement | undefined;
+    for (const [top, delta] of [
+      [14400, 14400],
+      [9600, -4800],
+    ] as const) {
+      h.mount.mockClear();
+      h.scroll.dispatchEvent(new WheelEvent('wheel', { cancelable: true, deltaY: delta }));
+      expect(h.scroll.scrollTop).toBe(top);
+      for (let index = top / 48; index < (top + 480) / 48; index++)
+        expect(h.surface.element(`n.md:${index}`)?.isConnected).toBe(true);
+      expect(h.mount.mock.calls.length).toBeLessThanOrEqual(15);
+      const measure = vi.fn();
+      h.onMeasure(measure);
+      h.surface.refreshMeasurements();
+      h.frame();
+      expect(measure).toHaveBeenCalled();
+      expect(h.surface.mountedKeys().length).toBeLessThanOrEqual(15);
+      vi.advanceTimersByTime(100);
+      h.frame();
+      expect(h.mount.mock.calls.length).toBeLessThanOrEqual(15);
+      visible = h.surface.element(`n.md:${top / 48 + 3}`);
+    }
+    const current = expectDefined(visible);
+    const inspect = vi.fn();
+    current.addEventListener('click', inspect);
+    current.click();
+    expect(inspect).toHaveBeenCalledOnce();
+    const top = current.getBoundingClientRect().top;
+    h.heights.set('n.md:192', 144);
+    vi.advanceTimersByTime(290);
+    for (let i = 0; i < 12; i++) {
+      h.mount.mockClear();
+      vi.advanceTimersByTime(50);
+      h.frame();
+      expect(h.mount.mock.calls.length).toBeLessThanOrEqual(4);
+      expect(current.getBoundingClientRect().top).toBe(top);
+    }
+    expect(h.surface.mountedKeys().length).toBeGreaterThan(25);
+    expect(h.surface.element('n.md:203')).toBe(current);
+    expect(current.getBoundingClientRect().top).toBe(top);
+  } finally {
+    h.surface.destroy();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps a retained Timeline step and its native echo measured until a resize arrives', () => {
+  const h = observedTimelinePane();
+  const wheel = (deltaY: number): void => {
+    const event = new WheelEvent('wheel', { cancelable: true, deltaY });
+    h.scroll.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  };
+  try {
+    h.surface.update(rows(2000), presentation);
+    h.scrollTo(48);
+    h.frame();
+    const keys = h.surface.mountedKeys();
+    const measure = vi.fn();
+    h.onMeasure(measure);
+    wheel(480);
+    h.frame();
+    expect(h.surface.mountedKeys()).toEqual(keys);
+    expect(measure).not.toHaveBeenCalled();
+    h.scroll.dispatchEvent(new Event('scroll'));
+    h.frame();
+    expect(measure).not.toHaveBeenCalled();
+
+    h.heights.set('n.md:0', 72);
+    h.resize();
+    wheel(-480);
+    h.scroll.dispatchEvent(new Event('scroll'));
+    h.frame();
+    expect(measure).toHaveBeenCalled();
+    expect(h.scroll.scrollTop).toBe(72);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('keeps a covered 933px wheel step and limits successive 1200px steps after a 6500px jump', () => {
+  const h = harness(false, false, false, { scrollReservePx: 'timeline' });
+  try {
+    h.size(700, 933);
+    h.surface.update(rows(2000), presentation);
+    const wheel = (deltaY: number) => {
+      h.mount.mockClear();
+      const event = new WheelEvent('wheel', { cancelable: true, deltaY });
+      h.scroll.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    };
+    const previous = h.surface.mountedKeys();
+    wheel(933);
+    expect(h.surface.mountedKeys()).toEqual(previous);
+    expect(h.mount).not.toHaveBeenCalled();
+    for (const step of [6500, 1200, 1200]) {
+      wheel(step);
+      const top = h.scroll.scrollTop;
+      for (let i = Math.floor(top / 48); i < Math.ceil((top + 933) / 48); i++)
+        expect(h.surface.element(`n.md:${i}`)?.isConnected).toBe(true);
+      expect(h.surface.mountedKeys().length).toBeLessThanOrEqual(25);
+    }
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it.each(['native step', 'source replacement', 'suspension'] as const)(
+  'retires the Timeline wheel reserve timeout on %s',
+  (action) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const h = harness(false, false, false, { scrollReservePx: 'timeline' });
+    try {
+      h.surface.update(rows(2000), presentation);
+      h.scroll.dispatchEvent(new WheelEvent('wheel', { cancelable: true, deltaY: 14400 }));
+      h.frame();
+      expect(h.surface.mountedKeys().length).toBeLessThanOrEqual(15);
+      if (action === 'suspension') h.surface.suspend(true);
+      else {
+        if (action === 'native step') h.scrollTo(14500);
+        else h.surface.update(rows(2500), presentation);
+        h.frame();
+        expect(h.surface.mountedKeys().length).toBeGreaterThan(25);
+      }
+      vi.advanceTimersByTime(900);
+      expect(h.pending()).toBe(0);
+    } finally {
+      h.surface.destroy();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it('prepares search results when a measurement observes the first wheel step before its scroll event', () => {
+  const h = harness(false, true, false, { scrollReservePx: 'search' });
+  try {
+    h.size(300, 288);
+    h.surface.update(rows(1000), presentation);
+    h.scroll.scrollTop = 320;
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(h.surface.element('n.md:24')?.isConnected).toBe(true);
+    h.scroll.dispatchEvent(new Event('scroll'));
+    h.frame();
+    expect(h.surface.mountedKeys().length).toBeLessThan(52);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('starts preparing a touched column only once a single finger moves vertically', () => {
+  const h = harness(false, false, false, { scrollReservePx: 'interactive' });
+  const touch = (type: string, x: number, y: number): void => {
+    h.scroll.dispatchEvent(
+      new TouchEvent(type, { touches: [{ clientX: x, clientY: y } as Touch] }),
+    );
+  };
+  try {
+    h.surface.update(rows(1000), presentation);
+    const cold = h.surface.mountedKeys();
+    touch('touchstart', 50, 100);
+    touch('touchmove', 150, 101);
+    h.frame();
+    expect(h.surface.mountedKeys()).toEqual(cold);
+    touch('touchstart', 50, 100);
+    touch('touchmove', 51, 65);
+    h.frame();
+    expect(h.surface.mountedKeys().length).toBeGreaterThan(cold.length);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('keeps the visited rows when a visible task receives focus and is revealed after fast scrolling', () => {
+  const h = harness(false, false, false, { scrollReservePx: 400 });
+  h.surface.update(rows(1000), presentation);
+  for (const top of [400, 900, 1500, 2100, 2700, 3300, 3900, 3300]) {
+    h.scrollTo(top);
+    h.frame();
+  }
+  const visited = h.surface.mountedKeys();
+  expect(visited.length).toBeGreaterThan(80);
+  h.mountedChanged.mockClear();
+  for (const key of ['n.md:72', 'n.md:75']) {
+    const clicked = expectDefined(h.surface.element(key));
+    clicked.focus({ preventScroll: true });
+    expect(h.surface.reveal(key)).toBe(clicked);
+    h.frame();
+    expect(h.host.ownerDocument.activeElement).toBe(clicked);
+    expect(h.surface.mountedKeys()).toEqual(visited);
+  }
+  expect(h.mountedChanged).not.toHaveBeenCalled();
+  h.scrollTo(2700);
+  h.frame();
+  expect(h.surface.element('n.md:60')?.isConnected).toBe(true);
+  expect(h.surface.element('n.md:75')).toBe(h.host.ownerDocument.activeElement);
+  h.scrollTo(24000);
+  h.frame();
+  const focused = expectDefined(h.surface.element('n.md:75'));
+  expect(h.host.ownerDocument.activeElement).toBe(focused);
+  focused.blur();
+  h.frame();
+  expect(h.surface.element('n.md:75')).toBeUndefined();
+  h.surface.destroy();
+});
+
+it('rebuilds a buffered range after failed measurement retires its rows', () => {
+  const h = harness(false, false, false, { scrollReservePx: 400 });
+  h.surface.update(rows(100), presentation);
+  h.onMeasure(() => {
+    throw new Error('Measurement failed');
+  });
+  h.resize();
+  h.frame();
+  expect(h.surface.mountedKeys()).toHaveLength(0);
+  h.onMeasure(undefined);
+  h.surface.resume();
+  expect(h.surface.element('n.md:0')?.isConnected).toBe(true);
+  h.surface.destroy();
 });
 
 it('admits an adopted owner before coalescing a pending old-window frame', () => {
@@ -2960,6 +3641,26 @@ describe('full-domain native task scrolling', () => {
     expect(h.scroll.scrollHeight).toBe(1_000_000);
     expect(h.surface.mountedKeys().length).toBeLessThan(100);
   });
+  it('keeps the interactive reverse margin after a compressed scrollbar jump', () => {
+    const h = harness(true, false, false, { scrollReservePx: 'interactive' });
+    try {
+      h.surface.update(hugeRows(), hugePresentation);
+      pointer(h.scroll);
+      h.scrollTo(499760);
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBe(240);
+      // Immediately before a reverse wheel step of one viewport.
+      expect(h.surface.element('number:4999987')?.isConnected).toBe(true);
+      h.scroll.dispatchEvent(new WheelEvent('wheel', { deltaY: -480 }));
+      h.scrollTo(h.scroll.scrollTop - 480);
+      h.frame();
+      expect(rowTop(h, 'number:4999990')).toBeCloseTo(240, 4);
+      expect(h.scroll.scrollHeight).toBe(1_000_000);
+      expect(h.surface.mountedKeys().length).toBeLessThan(40);
+    } finally {
+      h.surface.destroy();
+    }
+  });
   it('attributes wheel and touch inertia locally, resets at pointer, scrollend and quiet timeout', () => {
     vi.useFakeTimers();
     try {
@@ -3478,7 +4179,7 @@ it.each(['reveal', 'pin'] as const)(
 );
 
 it('reveals a row below a sticky Timeline axis instead of underneath it', () => {
-  const h = harness(false, false, false, 80);
+  const h = harness(false, false, false, { viewportInset: 80 });
   h.origin(80);
   const source = rows(100);
   h.surface.update(source, presentation);

@@ -875,6 +875,7 @@ export class ProjectsKanbanView<
     const viewport = new ProjectKanbanColumnViewport({
       host: content,
       scroll: body,
+      dragging: () => this.drag_abyssPrivate.dragging,
       mount: (host, row, markdown) => this.mountRow_abyssPrivate(host, row, markdown),
       mountedChanged: () => {
         this.mountedChanged_abyssPrivate();

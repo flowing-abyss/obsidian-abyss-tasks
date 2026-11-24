@@ -19,8 +19,9 @@ import {
   taskBoardEvidence,
   waitFor,
 } from './native-helpers.ts';
+import { rapidScroll, verifyProject, verifyTask, type RecordScroll } from './native-scroll.ts';
 import type { Host, NativeOptions } from './native-types.ts';
-import { ANALYSIS, type Sample } from './types.ts';
+import { ANALYSIS, FIXTURE_FOLDER, type Sample } from './types.ts';
 export { scenarioIds } from './types.ts';
 
 export type Measure = (
@@ -492,7 +493,87 @@ async function prepareProfileTasks(): Promise<void> {
   await frames();
 }
 
-export async function taskBoardScenarios(host: Host, measure: Measure): Promise<void> {
+function uncoveredTaskListHeight(scroller: HTMLElement, top: number, bottom: number): number {
+  let cursor = top;
+  let covered = 0;
+  for (const row of scroller.querySelectorAll(':scope > .abyss-virtual-row-frame')) {
+    const rect = row.getBoundingClientRect();
+    const start = Math.max(cursor, rect.top);
+    const end = Math.min(bottom, rect.bottom);
+    if (end <= start) continue;
+    const label = row.querySelector('.abyss-task-title, .abyss-group-header');
+    if (
+      label === null ||
+      label.textContent.trim() === '' ||
+      label.getBoundingClientRect().height === 0
+    )
+      continue;
+    covered += end - start;
+    cursor = end;
+  }
+  return bottom - top - covered;
+}
+
+/** Inspect the exposed strip immediately after each input, before the next paint opportunity. */
+async function scrollTaskList(): Promise<number[]> {
+  const scroller = element('.abyss-center .abyss-virtual-row-frame').parentElement;
+  if (
+    scroller === null ||
+    scroller.clientHeight <= 0 ||
+    scroller.clientWidth <= 0 ||
+    scroller.scrollHeight - scroller.clientHeight < 4000
+  )
+    throw new Error('Populated task list missing');
+  const top = scroller.getBoundingClientRect().top + scroller.clientTop;
+  const bottom = top + scroller.clientHeight;
+  const padding = Number.parseFloat(getComputedStyle(scroller).paddingTop);
+  const uncovered: number[] = [];
+  for (const direction of [1, -1]) {
+    for (let step = 0; step < 12; step++) {
+      await new Promise<void>((resolve) =>
+        window.requestAnimationFrame(() => {
+          resolve();
+        }),
+      );
+      const previous = scroller.scrollTop;
+      scroller.scrollTop += direction * 280;
+      if ((scroller.scrollTop - previous) * direction <= 0)
+        throw new Error('Task list did not advance in the requested direction');
+      const contentTop = top + Math.max(0, padding - scroller.scrollTop);
+      uncovered.push(uncoveredTaskListHeight(scroller, contentTop, bottom));
+    }
+  }
+  await frames();
+  if (scroller.querySelector('.abyss-task-card') === null)
+    throw new Error('Task list did not mount cards after the scroll');
+  return uncovered;
+}
+
+async function prepareScrolledCard(): Promise<HTMLElement> {
+  const list = element('.abyss-center .abyss-task-list-surface');
+  for (const top of [650, 1450, 2350, 3350, 4350, 5350, 4350, 3350, 2350, 1450, 650, 0]) {
+    list.scrollTop = top;
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+  const viewport = list.getBoundingClientRect();
+  const card = [...list.querySelectorAll<HTMLElement>('.abyss-task-card')].find((row) => {
+    const bounds = row.getBoundingClientRect();
+    return bounds.top >= viewport.top && bounds.bottom <= viewport.bottom;
+  });
+  if (card === undefined) throw new Error('Visible task missing after rapid scroll');
+  return card;
+}
+
+export async function taskBoardScenarios(
+  host: Host,
+  measure: Measure,
+  recordScroll: (uncovered: number[]) => void,
+  record: RecordScroll,
+): Promise<void> {
   const expected = new Map(
     DEFAULT_SETTINGS.taskStatuses.map((status) => [`status:${status.id}`, 0]),
   );
@@ -505,6 +586,42 @@ export async function taskBoardScenarios(host: Host, measure: Measure): Promise<
     expected.set(key, (expected.get(key) ?? 0) + 1);
   }
   await prepareProfileTasks();
+  let uncovered: number[] = [];
+  await measure('ui.tasks.list-scroll', async () => {
+    uncovered = await scrollTaskList();
+    return { steps: uncovered.length };
+  });
+  recordScroll(uncovered);
+  let target: HTMLElement | undefined;
+  await measure(
+    'ui.tasks.list-scroll-inspector',
+    async () => {
+      const title = target?.querySelector('.abyss-task-title')?.textContent.trim();
+      const rowKey = target?.dataset['rowKey'];
+      if (
+        target?.isConnected !== true ||
+        title === undefined ||
+        title === '' ||
+        rowKey === undefined ||
+        rowKey === ''
+      )
+        throw new Error('Scrolled task unavailable');
+      target.focus({ preventScroll: true });
+      target.click();
+      await waitFor(() => {
+        const inspector = activeDocument.querySelector<HTMLElement>('.abyss-right-title-view');
+        return (
+          inspector !== null && inspector.clientHeight > 0 && inspector.textContent.trim() === title
+        );
+      }, 'clicked task visible in inspector');
+      await frames();
+      return { openedClickedTask: true, rowKey };
+    },
+    async () => {
+      target = await prepareScrolledCard();
+    },
+  );
+  await dependencyScroll(host, measure, record);
   await measure('ui.tasks.kanban', async () => {
     await click('.abyss-task-collection-switcher [aria-label="Kanban view"]');
     await searchReady();
@@ -521,6 +638,70 @@ export async function taskBoardScenarios(host: Host, measure: Measure): Promise<
     const { tasks, columns } = taskBoardEvidence(board, expected);
     return { tasks, columns, scrolls: 3 };
   });
+  await rapidScroll('tasks.kanban', measure, record, verifyTask);
+}
+
+async function dependencyScroll(host: Host, measure: Measure, record: RecordScroll): Promise<void> {
+  const queries = plugin(host).queries;
+  const title = element('.abyss-right-title-view').textContent.trim();
+  const source = queries.list().find((task) => task.title === title);
+  if (source === undefined) throw new Error('Selected fixture dependency owner missing');
+  const file = host.vault.getFileByPath(source.ref.filePath);
+  if (file?.path.startsWith(`${FIXTURE_FOLDER}/`) !== true)
+    throw new Error('Dependency owner outside fixture');
+  const original = await host.vault.read(file);
+  try {
+    await measure('ui.inspector.dependencies', async () => {
+      await click('.abyss-dep-badge-body');
+      const input = element<HTMLInputElement>('.abyss-dep-search input');
+      for (const query of ['Profile', 'database']) {
+        input.value = query;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      await waitFor(() => {
+        const titles = [...activeDocument.querySelectorAll('.abyss-dep-search-title')];
+        return titles.length > 0 && titles.every((label) => label.textContent.includes('database'));
+      }, 'hydrated replacement dependency query');
+      return { query: 'database' };
+    });
+    await rapidScroll('inspector.dependencies', measure, record, async (_key, name) => {
+      const blocker = queries.list().find((task) => task.title === name);
+      if (blocker === undefined) throw new Error('Selected blocker missing from fixture');
+      const id = /^Profile task (\d+) database$/u.exec(name)?.[1];
+      if (id === undefined) throw new Error(`Unexpected blocker title: ${name}`);
+      await waitFor(() => {
+        const current = queries
+          .list({ filePath: file.path })
+          .find((task) => task.ref.line === source.ref.line);
+        return (
+          current !== undefined &&
+          queries
+            .dependencies({ type: 'task', ref: current.ref })
+            .blockedBy.some(
+              (relation) =>
+                relation.type === 'resolved' &&
+                relation.dependencyId === `profile-${id}` &&
+                relation.task.root.ref.filePath === blocker.ref.filePath &&
+                relation.task.root.ref.line === blocker.ref.line,
+            ) &&
+          [...activeDocument.querySelectorAll('.abyss-dep-title')].some(
+            (label) => label.textContent === name,
+          )
+        );
+      }, `persisted dependency for ${name}`);
+    });
+  } finally {
+    if ((await host.vault.read(file)) !== original) {
+      await host.vault.modify(file, original);
+      await waitFor(
+        () =>
+          queries
+            .list({ filePath: file.path })
+            .some((task) => task.source.originalBlock === source.source.originalBlock),
+        'restored fixture dependency',
+      );
+    }
+  }
 }
 
 function timelineReady(scroller: HTMLElement, rowSelector: string): boolean {
@@ -689,7 +870,11 @@ async function timelineScrolls(
   };
 }
 
-export async function taskTimelineScenarios(host: Host, measure: Measure): Promise<void> {
+export async function taskTimelineScenarios(
+  host: Host,
+  measure: Measure,
+  record: RecordScroll,
+): Promise<void> {
   const tasks = plugin(host).queries.listNodes().length;
   if (tasks === 0) throw new Error('Profile task Timeline population missing');
   await prepareProfileTasks();
@@ -715,9 +900,10 @@ export async function taskTimelineScenarios(host: Host, measure: Measure): Promi
     },
     () => prepareTimelineScroll(scroller, '.abyss-task-timeline-row', workload.startDay),
   );
+  await rapidScroll('tasks.timeline', measure, record, verifyTask);
 }
 
-export async function projectScenarios(measure: Measure): Promise<void> {
+export async function projectScenarios(measure: Measure, record: RecordScroll): Promise<void> {
   for (const [id, label, selector] of [
     ['table', 'Table view', '.abyss-project-table-row'],
     ['kanban', 'Kanban view', '.abyss-project-kanban-card'],
@@ -735,6 +921,10 @@ export async function projectScenarios(measure: Measure): Promise<void> {
         );
       return { projects: 100, view: id };
     });
+    if (id !== 'timeline') {
+      await rapidScroll(`projects.${id}`, measure, record, verifyProject);
+      await click('.abyss-project-back');
+    }
   }
   const scroller = element('.abyss-center .abyss-project-timeline-scroll');
   const workload = timelineWorkload();
@@ -746,6 +936,7 @@ export async function projectScenarios(measure: Measure): Promise<void> {
     }),
     () => prepareTimelineScroll(scroller, '.abyss-project-timeline-row', workload.startDay),
   );
+  await rapidScroll('projects.timeline', measure, record, verifyProject);
 }
 
 export async function statisticsScenarios(host: Host, measure: Measure): Promise<void> {

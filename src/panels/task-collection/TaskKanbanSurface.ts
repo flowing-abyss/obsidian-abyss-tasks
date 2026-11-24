@@ -183,7 +183,19 @@ export class TaskKanbanSurface<T> implements TaskCollectionSurface<T> {
     const body = element.createDiv({ cls: 'abyss-task-kanban-column-body' });
     const capture = body.createDiv({ cls: 'abyss-task-kanban-capture' });
     const content = body.createDiv({ cls: 'abyss-task-kanban-window' });
-    const viewport = new TaskListSurface({ ...this.options, host: content, scroll: body });
+    const owner = body.ownerDocument.defaultView;
+    const coarsePointer =
+      typeof owner?.matchMedia === 'function' && owner.matchMedia('(pointer: coarse)').matches;
+    // A touch fling can move the column several card heights before its first scroll event.
+    const viewport = new TaskListSurface(
+      {
+        ...this.options,
+        host: content,
+        scroll: body,
+        openingOverscanPx: coarsePointer ? 480 : 170,
+      },
+      'interactive',
+    );
     viewport.suspend();
     const column: Column<T> = {
       model,

@@ -62,6 +62,7 @@ interface DependencyDemand {
   readonly revision: number;
   readonly offsets: readonly number[];
   readonly anchorOffset: number;
+  readonly visible: readonly number[];
 }
 interface DependencyFill {
   readonly demand: DependencyDemand;
@@ -366,6 +367,7 @@ const changedSelection = 'Task changed. Select again or edit text.';
 
 class DependencySearchController {
   #options: readonly DependencySearchOption[] = [];
+  readonly #rendered = new WeakMap<HTMLElement, DependencySearchOption>();
   #surface: TaskListSurface<number> | undefined;
   #scheduler: BrowserTaskScheduler | undefined;
   #document: Document | undefined;
@@ -400,6 +402,7 @@ class DependencySearchController {
   #unsubscribe: (() => void) | undefined;
   #request = 0;
   #settled = false;
+  #loadedWindow = false;
   #restartedStale = false;
   #attached = false;
   #generation: number | undefined;
@@ -418,17 +421,7 @@ class DependencySearchController {
     private readonly detachOwner: () => void,
   ) {
     this.#direction = callbacks.direction;
-    view.list.addEventListener(
-      'scroll',
-      () => {
-        if (this.#releaseMovePin !== undefined && this.#moveScrollTop === view.list.scrollTop)
-          return;
-        this.#cancelDemand();
-        this.#cancelMove();
-        this.#queuedMove = undefined;
-      },
-      { passive: true },
-    );
+    view.list.addEventListener('scroll', this.#onScroll, { passive: true });
     this.#status = new SearchStatus(view.element, view.element, (message) => {
       showError(view.error, message);
     });
@@ -441,13 +434,48 @@ class DependencySearchController {
       isClosed,
     );
   }
-  #activeIndex(): number {
-    return this.#options.findIndex(
-      (option) =>
-        this.#selected !== undefined &&
-        sameSearchAddress(option.address, this.#selected) &&
-        isEligible(this.#direction, option),
-    );
+  readonly #onScroll = (): void => {
+    if (this.#releaseMovePin !== undefined && this.#moveScrollTop === this.view.list.scrollTop)
+      return;
+    const interrupted = this.#demand !== undefined || this.#movement !== undefined;
+    this.#cancelMove();
+    this.#queuedMove = undefined;
+    this.#syncActive();
+    if (interrupted) {
+      this.#surface?.refreshMeasurements();
+      this.#mountedChanged();
+    }
+  };
+  #syncActive(): void {
+    if (this.#selected === undefined && !this.view.input.hasAttribute('aria-activedescendant'))
+      return;
+    const offset = this.#activeOption()?.offset;
+    const id = offset === undefined ? null : this.#surface?.element(String(offset))?.id;
+    if (id !== this.view.input.getAttribute('aria-activedescendant'))
+      updateActive(this.view.list, this.view.input, offset ?? -1);
+  }
+  #selectedOption(): DependencySearchOption | undefined {
+    const address = this.#selected;
+    return address === undefined
+      ? undefined
+      : this.#options.find((option) => sameSearchAddress(option.address, address));
+  }
+  #selectionChanged(): boolean {
+    if (this.#selected === undefined) return false;
+    const option = this.#selectedOption();
+    // An offset confirmed in this generation may simply be outside the mounted window.
+    return option === undefined
+      ? this.#selectedOffset === undefined
+      : !isEligible(this.#direction, option);
+  }
+  #activeOption(): DependencySearchOption | undefined {
+    const option = this.#selectedOption();
+    if (!isEligible(this.#direction, option)) return;
+    const row = this.#surface?.element(String(option.offset))?.getBoundingClientRect();
+    const viewport = this.view.list.getBoundingClientRect();
+    return row !== undefined && row.bottom > viewport.top && row.top < viewport.bottom
+      ? option
+      : undefined;
   }
   #dropSurface(): void {
     const active = this.view.element.ownerDocument.activeElement;
@@ -467,6 +495,7 @@ class DependencySearchController {
     this.view.createAffordance.setAttribute('aria-disabled', 'true');
     this.view.createAffordance.setAttribute('disabled', '');
     this.#settled = false;
+    this.#loadedWindow = false;
   }
   #cancel(): void {
     this.#queuedMove = undefined;
@@ -621,16 +650,19 @@ class DependencySearchController {
     const win = this.#document.defaultView;
     if (win === null) throw new TaskSearchError('disposed', 'Owner unavailable');
     this.#scheduler = createBrowserTaskScheduler(win);
-    this.#surface = new TaskListSurface<number>({
-      host: this.view.list,
-      scroll: this.view.list,
-      mount: (host, row) => this.#mountRow(host, row),
-      mountedChanged: this.#mountedChanged,
-      reportFailure: (error) => {
-        this.#cancelDemand();
-        this.#failure(request, error);
+    this.#surface = new TaskListSurface<number>(
+      {
+        host: this.view.list,
+        scroll: this.view.list,
+        mount: (host, row) => this.#mountRow(host, row),
+        mountedChanged: this.#mountedChanged,
+        reportFailure: (error) => {
+          this.#cancelDemand();
+          this.#failure(request, error);
+        },
       },
-    });
+      'search',
+    );
     this.view.list.classList.add('has-candidates');
     this.#bindGeometry();
     this.#surface.update(
@@ -681,6 +713,7 @@ class DependencySearchController {
     });
     return {
       element,
+      measurementReady: () => !element.inert,
       update: () => {},
       destroy: () => {
         element.remove();
@@ -743,11 +776,12 @@ class DependencySearchController {
       .sort((a, b) => a - b);
     if (offsets.length === 0) return;
     const rect = this.view.list.getBoundingClientRect();
-    const anchorOffset =
-      offsets.find((offset) => {
-        const holder = surface.element(String(offset))?.getBoundingClientRect();
-        return holder !== undefined && holder.bottom > rect.top && holder.top < rect.bottom;
-      }) ?? offsets[0];
+    const visible = offsets.filter((offset) => {
+      const row = surface.element(String(offset));
+      const bounds = row?.parentElement?.getBoundingClientRect();
+      return bounds !== undefined && bounds.bottom > rect.top && bounds.top < rect.bottom;
+    });
+    const anchorOffset = visible[0] ?? offsets[0];
     if (anchorOffset === undefined) return;
     return {
       sessionId: this.#request,
@@ -755,10 +789,11 @@ class DependencySearchController {
       revision: this.#demandRevision,
       offsets,
       anchorOffset,
+      visible,
     };
   }
   #signature(demand: DependencyDemand): string {
-    return `${demand.sessionId}:${demand.generation}:${demand.anchorOffset}:${demand.offsets.join(',')}`;
+    return `${demand.sessionId}:${demand.generation}:${demand.offsets.join(',')}`;
   }
   readonly #mountedChanged = (): void => {
     if (this.#publishing) return;
@@ -777,6 +812,8 @@ class DependencySearchController {
     const signature = this.#signature(captured);
     if (signature === this.#demand?.signature || signature === this.#settledDemand) return;
     this.#cancelDemand();
+    // Filtering the cache for this window invalidates the previous settled window.
+    this.#settledDemand = undefined;
     const demand = { ...captured, revision: ++this.#demandRevision };
     const controller = new AbortController();
     this.#demand = { demand, signature, controller };
@@ -786,7 +823,7 @@ class DependencySearchController {
     this.#settled = false;
     this.view.createAffordance.setAttribute('aria-disabled', 'true');
     this.view.createAffordance.setAttribute('disabled', '');
-    this.view.input.removeAttribute('aria-activedescendant');
+    this.#syncActive();
     this.#status.pending(this.#request, this.#query);
     void this.#runDemand(demand, controller.signal).catch((error: unknown) => {
       if (!this.#demandLive(demand, controller.signal)) {
@@ -814,7 +851,6 @@ class DependencySearchController {
     if (!this.#demandLive(demand, signal)) throw new TaskSearchError('aborted', 'Search cancelled');
   }
   #cancelDemand(): void {
-    if (this.#demand?.signature === this.#settledDemand) this.#settledDemand = undefined;
     this.#demand?.controller.abort();
     this.#demand = undefined;
   }
@@ -823,11 +859,21 @@ class DependencySearchController {
     const session = this.#session;
     if (session === undefined) throw new TaskSearchError('aborted', 'Search cancelled');
     const candidates = [...this.#candidates];
-    const runs = dependencyRuns(demand.offsets);
-    await this.#fillMountedRuns(demand, signal, runs, candidates);
+    // Keep the initial opening and keyboard reveal together. During scrolling a
+    // visible option can be used while the rest of the mounted window is fetched.
+    if (this.#loadedWindow && this.#releaseMovePin === undefined) {
+      const visible = new Set(demand.visible);
+      await this.#fillMountedRuns(demand, signal, candidates, 'visible');
+      const ready = candidates.filter((candidate) => visible.has(candidate.offset));
+      await this.#projectOptions(demand, signal, ready);
+      this.#checkDemand(demand, signal);
+      this.#candidates = [...candidates];
+      this.#syncActive();
+    }
+    await this.#fillMountedRuns(demand, signal, candidates, 'mounted');
     // Demanded sparse runs are visited first; each remaining gap is traversed at most once.
     for (const interval of dependencyFillIntervals(
-      runs,
+      dependencyRuns(demand.offsets),
       demand.anchorOffset,
       session.totalCandidates,
     )) {
@@ -843,15 +889,15 @@ class DependencySearchController {
   async #readDemandInterval(
     demand: DependencyDemand,
     signal: AbortSignal,
-    start: number,
-    limit: number,
+    { offset, limit }: { offset: number; limit: number },
+    yieldAfter = true,
   ): Promise<readonly DependencyCandidate[]> {
     this.#checkDemand(demand, signal);
-    const range = await this.#session?.readRange(start, limit, signal);
+    const range = await this.#session?.readRange(offset, limit, signal);
     this.#checkDemand(demand, signal);
-    validateDemandRange(range, demand.generation, start, limit);
+    validateDemandRange(range, demand.generation, offset, limit);
     const included = this.#admitCandidates(range.candidates);
-    await this.#scheduler?.yield(signal);
+    if (yieldAfter) await this.#scheduler?.yield(signal);
     this.#checkDemand(demand, signal);
     return included;
   }
@@ -892,14 +938,18 @@ class DependencySearchController {
   async #fillMountedRuns(
     demand: DependencyDemand,
     signal: AbortSignal,
-    runs: ReadonlyArray<{ start: number; end: number }>,
     candidates: DependencyCandidate[],
+    target: 'visible' | 'mounted',
   ): Promise<void> {
     const reused = new Set(candidates.map((candidate) => candidate.offset));
-    for (const run of runs) {
-      for (const { offset, limit } of this.#unknownRanges({ ...run, direction: 1 }, reused)) {
-        candidates.push(...(await this.#readDemandInterval(demand, signal, offset, limit)));
-      }
+    const runs = dependencyRuns(target === 'visible' ? demand.visible : demand.offsets);
+    const ranges = runs.flatMap((run) => [
+      ...this.#unknownRanges({ ...run, direction: 1 }, reused),
+    ]);
+    for (const [index, range] of ranges.entries()) {
+      // Publish the last visible batch in this turn. Larger reads still yield between chunks.
+      const yieldAfter = target === 'mounted' || index < ranges.length - 1;
+      candidates.push(...(await this.#readDemandInterval(demand, signal, range, yieldAfter)));
     }
   }
   async #fillUnknownInterval(
@@ -911,8 +961,8 @@ class DependencySearchController {
     const { direction } = interval;
     let remaining = dependencyFillDeficit(demand, candidates, direction);
     if (remaining <= 0) return;
-    for (const { offset, limit } of this.#unknownRanges(interval)) {
-      const included = await this.#readDemandInterval(demand, signal, offset, limit);
+    for (const range of this.#unknownRanges(interval)) {
+      const included = await this.#readDemandInterval(demand, signal, range);
       remaining -= included.length;
       retainDependencyFill(demand, candidates, included, direction);
       if (remaining <= 0) break;
@@ -921,7 +971,6 @@ class DependencySearchController {
   #publishFilled(fill: DependencyFill, signal: AbortSignal): void {
     this.#checkDemand(fill.demand, signal);
     if (fill.demand.offsets.length === 0) return;
-    this.#settledDemand = this.#signature(fill.demand);
     const surface = this.#surface;
     if (surface === undefined) return;
     if (fill.omittedRevision !== this.#publishedOmittedRevision) {
@@ -958,29 +1007,50 @@ class DependencySearchController {
       settled?.offsets.every((offset) =>
         this.#candidates.some((candidate) => candidate.offset === offset),
       ) === true
-    )
+    ) {
       this.#settledDemand = this.#signature(settled);
-    else this.#mountedChanged();
+      // Releasing a keyboard pin can expose more rows during the measurement microtask.
+      if (this.#settled) this.#status.complete(this.#request, demand.generation);
+    } else this.#mountedChanged();
+    setBusy(this.view.element, this.view.input, this.#commit.busy());
   }
   async #projectDemand(
     demand: DependencyDemand,
     signal: AbortSignal,
     exhausted: boolean,
   ): Promise<void> {
-    const options = await this.#session?.options(this.#candidates, signal);
+    const mounted = new Set(this.#candidates.map((candidate) => candidate.offset));
+    this.#options = this.#options.filter((option) => mounted.has(option.offset));
+    await this.#projectOptions(demand, signal, this.#candidates);
     this.#checkDemand(demand, signal);
-    this.#options = options ?? [];
-    this.#refreshSelectedOffset();
-    for (const option of this.#options) this.#renderOption(option);
     this.#revealMovement();
     if (exhausted) this.#completeEmpty();
     this.#settled = this.#mountedReady();
-    if (this.#settled) this.view.createAffordance.removeAttribute('aria-disabled');
-    refreshSearchSelection(this.view, this.#options[this.#activeIndex()], this.#selected);
-    if (this.#settled) this.#status.complete(this.#request, demand.generation);
+    if (this.#settled) {
+      this.#loadedWindow = true;
+      this.view.createAffordance.removeAttribute('aria-disabled');
+    }
+    refreshSearchSelection(this.view, this.#activeOption(), this.#selectionChanged());
     this.#surface?.refreshMeasurements();
-    setBusy(this.view.element, this.view.input, this.#commit.busy());
     this.#finishMovement();
+  }
+  async #projectOptions(
+    demand: DependencyDemand,
+    signal: AbortSignal,
+    candidates: readonly DependencyCandidate[],
+  ): Promise<void> {
+    // Labels and eligibility belong to this search session. Only newly exposed
+    // candidates need projection; retained rows keep their DOM and handlers.
+    const byOffset = new Map(this.#options.map((option) => [option.offset, option]));
+    const missing = candidates.filter((candidate) => !byOffset.has(candidate.offset));
+    if (missing.length > 0) {
+      const added = await this.#session?.options(missing, signal);
+      this.#checkDemand(demand, signal);
+      for (const option of added ?? []) byOffset.set(option.offset, option);
+    }
+    this.#options = [...byOffset.values()];
+    this.#refreshSelectedOffset();
+    for (const option of this.#options) this.#renderOption(option);
   }
   #revealMovement(): void {
     // Hydrated labels replace placeholder heights before movement gives up its pin.
@@ -1010,14 +1080,13 @@ class DependencySearchController {
     );
   }
   #refreshSelectedOffset(): void {
-    const selected = this.#options.find(
-      (option) => this.#selected !== undefined && sameSearchAddress(option.address, this.#selected),
-    );
+    const selected = this.#selectedOption();
     if (selected !== undefined) this.#selectedOffset = selected.offset;
   }
   #renderOption(option: DependencySearchOption): void {
     const holder = this.#surface?.element(String(option.offset));
-    if (holder === undefined) return;
+    if (holder === undefined || this.#rendered.get(holder) === option) return;
+    this.#rendered.set(holder, option);
     holder.empty();
     holder.inert = false;
     holder.removeAttribute('aria-hidden');
@@ -1031,6 +1100,11 @@ class DependencySearchController {
     const path = context.createSpan({ text: option.sourcePath ?? option.context });
     if (option.sourcePath !== undefined)
       context.appendText(option.context.slice(option.sourcePath.length));
+    this.#highlightOption(option, title, path);
+    if (option.disabledReason !== undefined)
+      holder.createSpan({ cls: 'abyss-dep-search-reason', text: option.disabledReason });
+  }
+  #highlightOption(option: DependencySearchOption, title: HTMLElement, path: HTMLElement): void {
     if (this.#highlight !== undefined) {
       markSearchText(
         title,
@@ -1046,8 +1120,6 @@ class DependencySearchController {
           this.#segment,
         );
     }
-    if (option.disabledReason !== undefined)
-      holder.createSpan({ cls: 'abyss-dep-search-reason', text: option.disabledReason });
   }
   #completeEmpty(): void {
     this.view.list.classList.remove('has-candidates');
@@ -1122,12 +1194,13 @@ class DependencySearchController {
   };
   readonly #select = (option: DependencySearchOption): void => {
     if (
-      !this.#settled ||
+      (!this.#settled && this.#demand === undefined) ||
       this.#commit.busy() ||
       !isEligible(this.#direction, option) ||
       !this.#live(this.#request)
     )
       return;
+    this.#cancelDemand();
     this.#selected = option.address;
     this.#selectedOffset = option.offset;
     updateActive(this.view.list, this.view.input, option.offset);
@@ -1176,20 +1249,29 @@ class DependencySearchController {
     event.preventDefault();
     event.stopPropagation();
     if (this.#commit.busy() || this.#movement !== undefined) return;
-    if (!this.#settled) {
-      if (event.key !== 'Enter') this.#queuedMove = event.key;
+    if (event.key === 'Enter') {
+      this.#enter();
       return;
     }
-    if (event.key === 'Enter') {
-      const option = this.#options[this.#activeIndex()];
-      if (option !== undefined) this.#select(option);
-      else if (this.#selected !== undefined) showError(this.view.error, changedSelection);
-      else this.create();
+    if (!this.#settled) {
+      this.#queuedMove = event.key;
       return;
     }
     this.#move(event.key);
   };
+  #enter(): void {
+    const option = this.#activeOption();
+    if (option !== undefined && this.#releaseMovePin === undefined) this.#select(option);
+    else if (this.#settled) {
+      if (this.#selectionChanged()) showError(this.view.error, changedSelection);
+      else if (this.#selected === undefined) this.create();
+    }
+  }
   #cancelMove(): void {
+    if (this.#releaseMovePin !== undefined) {
+      this.#selected = undefined;
+      this.#selectedOffset = undefined;
+    }
     if (this.#movement !== undefined) this.#settledDemand = undefined;
     this.#movement?.abort();
     this.#movement = undefined;
@@ -1317,9 +1399,9 @@ class DependencySearchController {
 function refreshSearchSelection(
   view: SearchElements,
   active: DependencySearchOption | undefined,
-  selected: TaskSearchAddress | undefined,
+  invalidSelection: boolean,
 ): void {
-  if (selected !== undefined && active === undefined) showError(view.error, changedSelection);
+  if (invalidSelection) showError(view.error, changedSelection);
   else if (view.error.textContent === changedSelection) clearError(view.error);
   updateActive(view.list, view.input, active?.offset ?? -1);
 }

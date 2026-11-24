@@ -1,3 +1,4 @@
+import { MarkdownRenderer } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import { expectDefined, useRealMoment } from './helpers';
@@ -6,6 +7,57 @@ import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
+
+it('opens the fully formatted task at a distant scroll position using its normal card', async () => {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+    const match = /^\*\*(needle \d{3})\*\*$/.exec(source);
+    if (match?.[1] !== undefined) holder.createEl('strong', { text: match[1] });
+  });
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.inbox = { mode: 'tag', tag: '#category', removeTagOnAssign: false };
+  const h = await mountCanonicalSearchUi(
+    {
+      'tasks.md': Array.from(
+        { length: 120 },
+        (_, i) => `- [x] **needle ${String(i).padStart(3, '0')}** #category 📅 2026-10-26`,
+      ).join('\n'),
+    },
+    settings,
+    'tasks',
+  );
+  try {
+    expectDefined(h.root.querySelector<HTMLButtonElement>('[aria-label="Timeline view"]')).click();
+    h.query('needle');
+    await h.completed();
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-timeline'));
+    expect(scroll.querySelector('[data-timeline-preview-key]')).toBeNull();
+    scroll.scrollTop = 7300;
+    scroll.dispatchEvent(new Event('scroll'));
+    const row = await vi.waitFor(() => {
+      const target = expectDefined(
+        scroll.querySelector<HTMLElement>(
+          '[data-occurrence-id="tasks.md:105"].abyss-task-timeline-row',
+        ),
+      );
+      expect(target.querySelector('.abyss-task-card .abyss-task-title')?.textContent).toBe(
+        'needle 105',
+      );
+      return target;
+    });
+    expect(row.querySelector('.abyss-task-title strong')?.textContent).toBe('needle 105');
+    expect(row.classList.contains('is-done')).toBe(true);
+    expect(row.querySelector('.abyss-status-marker')).not.toBeNull();
+    expect(row.querySelector('.abyss-task-date-part')).not.toBeNull();
+    expect(row.textContent).toContain('category');
+    expect(row.querySelector('.abyss-project-timeline-track')).not.toBeNull();
+    expectDefined(row.querySelector<HTMLElement>('.abyss-task-card')).click();
+    await vi.waitFor(() => {
+      expect(h.state.get('taskStack')[0]?.ref).toMatchObject({ filePath: 'tasks.md', line: 105 });
+    });
+  } finally {
+    h.dispose();
+  }
+});
 
 it('switches Tasks to Timeline with shared search, exact descendant cards and independent date display', async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
