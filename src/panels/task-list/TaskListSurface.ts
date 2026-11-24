@@ -84,6 +84,7 @@ interface CapturedPin {
 }
 
 const maxRevealMeasurementPasses = 16;
+const distantSeekScreens = 4;
 
 interface RevealPlacement {
   readonly key: string;
@@ -938,7 +939,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #refillTimelineNeighbors(): void {
     const stage = this.#viewport.extendTimelineReserve();
     if (stage !== 'partial') this.#endTimelineSeek();
-    if (stage === 'stable' || !this.#bind() || !this.#active()) return;
+    if (stage === 'stable') return;
+    if (!this.#bind() || !this.#active()) {
+      this.#endTimelineSeek();
+      return;
+    }
     this.#reconcilePending();
     if (stage === 'partial') this.#refillAfterSeek(50);
   }
@@ -985,31 +990,30 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       const next = { top: scroll.scrollTop, left: scroll.scrollLeft };
       const previous = this.#lastScroll ?? next;
       this.#lastScroll = next;
-      const listSeek = this.#bufferScrollStep(next.top, previous);
+      const beforePaint = this.#bufferScrollStep(next.top, previous);
       // Horizontal Timeline motion cannot change the vertical range. Other pending work,
       // including resize and hydration receipts, keeps its independently scheduled frame.
       if (sameOwner && previous.top === next.top && previous.left !== next.left) return;
       // Read each vertical event before the frame so away-and-back input retains its intent.
       this.#top();
       if (previous.top !== next.top && this.#active()) this.#pendingScroll = undefined;
-      this.#scheduleScrollStep(next.top - previous.top, listSeek);
+      this.#scheduleScrollStep(next.top - previous.top, beforePaint);
     });
   };
-  #scheduleScrollStep(distance: number, listSeek: boolean): void {
+  #scheduleScrollStep(distance: number, beforePaint: boolean): void {
     // Reuse the coalesced pre-paint measurement pass when a fling can outrun the frame callback.
     // A programmatic Timeline step has already recorded the position its scroll event reports.
     const timelineScroll =
       this.#activeBuffer === 'timeline' &&
       (distance !== 0 || this.#scrollBuffer === 'timeline-seek');
     this.#queueFrame(this.#activeBuffer !== 'timeline' || timelineScroll ? 'scroll' : 'measure');
-    if (listSeek || (timelineScroll && isLargeScrollStep(distance, this.#height())))
-      this.#flushBeforePaint();
+    if (beforePaint) this.#flushBeforePaint();
   }
   #bufferScrollStep(top: number, previous: { top: number } | undefined): boolean {
     const distance = Math.abs(top - (previous?.top ?? top));
     if (distance === 0) return false;
+    if (this.#activeBuffer === 'timeline') return this.#nativeTimelineStep(distance);
     if (this.#activeBuffer !== 'scroll') {
-      this.#endTimelineSeek();
       this.#scrollBuffer = this.#activeBuffer;
       return false;
     }
@@ -1019,10 +1023,27 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     // A one-page reversal after a distant seek may already extend beyond the compact landing.
     return prior === 'interactive' || this.#scrollBuffer === 'interactive';
   }
+  #nativeTimelineStep(distance: number): boolean {
+    const height = this.#height();
+    const previousSeek = this.#scrollBuffer === 'timeline-seek';
+    this.#endTimelineSeek();
+    if (
+      distance >= distantSeekScreens * height &&
+      !this.#pendingUpdate &&
+      this.#canBufferRange() &&
+      !this.#scrollWindow.isCompressed(this.#viewport.totalHeight)
+    ) {
+      this.#scrollBuffer = 'timeline-seek';
+      this.#refillAfterSeek();
+      return true;
+    }
+    this.#scrollBuffer = 'timeline';
+    return previousSeek || isLargeScrollStep(distance, height);
+  }
   #nextListBuffer(previous: ScrollBuffer, distance: number): ScrollBuffer {
     if (distance < 170) return previous === 'interactive' ? 'history' : previous;
     const height = this.#height();
-    if (distance >= 4 * height) return 'interactive';
+    if (distance >= distantSeekScreens * height) return 'interactive';
     if (previous === 'history' || previous === 'interactive') return 'history';
     return isLargeScrollStep(distance, height) ? 'history' : 'scroll';
   }

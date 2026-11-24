@@ -2467,6 +2467,72 @@ it('publishes clickable canonical Timeline rows before a large wheel handler ret
   }
 });
 
+it('restores the full Timeline reserve when the pane was hidden during a native seek refill', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const h = observedTimelinePane();
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  try {
+    h.surface.update(rows(2000), presentation);
+    h.frame();
+    h.scrollTo(14400);
+    await Promise.resolve();
+    expect(h.surface.mountedKeys().length).toBeLessThanOrEqual(15);
+    hidden.mockReturnValue(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    vi.advanceTimersByTime(450);
+    h.frame();
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    h.frame();
+    expect(h.surface.mountedKeys().length).toBeGreaterThan(25);
+    expect(h.surface.element('n.md:305')?.isConnected).toBe(true);
+  } finally {
+    h.surface.destroy();
+    hidden.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps native Timeline landings compact through a reversal, then refills around the same card', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const h = harness(false, false, false, { scrollReservePx: 'timeline', stagedMounts: 'detached' });
+  try {
+    h.surface.update(rows(2000), presentation);
+    h.frame();
+    for (const top of [14400, 28800, 9600]) {
+      h.mount.mockClear();
+      h.scrollTo(top);
+      await Promise.resolve();
+      for (let index = top / 48; index < (top + 480) / 48; index++)
+        expect(h.surface.element(`n.md:${index}`)?.isConnected).toBe(true);
+      expect(h.mount.mock.calls.length).toBeLessThanOrEqual(15);
+    }
+    const landing = expectDefined(h.surface.element('n.md:200'));
+    expect(landing.isConnected).toBe(true);
+    const position = landing.getBoundingClientRect().top;
+    const compactCount = h.surface.mountedKeys().length;
+    vi.advanceTimersByTime(399);
+    h.frame();
+    expect(h.surface.mountedKeys()).toHaveLength(compactCount);
+    for (let i = 0; i < 12; i++) {
+      vi.advanceTimersByTime(50);
+      h.frame();
+    }
+    expect(h.surface.mountedKeys().length).toBeGreaterThan(compactCount);
+    expect(h.surface.element('n.md:200')).toBe(landing);
+    expect(landing.getBoundingClientRect().top).toBe(position);
+    h.scrollTo(28800);
+    await Promise.resolve();
+    // Four rows is less than half a viewport but more than the compact landing's margin.
+    h.scrollTo(28608);
+    await Promise.resolve();
+    expect(h.surface.element('n.md:596')?.isConnected).toBe(true);
+  } finally {
+    h.surface.destroy();
+    vi.useRealTimers();
+  }
+});
+
 it('publishes only the visible destination and a small margin throughout repeated multi-screen Timeline jumps', () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const h = harness(false, false, false, { scrollReservePx: 'timeline', stagedMounts: 'detached' });

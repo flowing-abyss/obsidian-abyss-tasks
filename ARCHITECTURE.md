@@ -150,8 +150,9 @@ Opening a menu on one task must still target that task if the inspector selectio
 **Collections and search.** List, Kanban, and Timeline share the task list surface and card
 interactions. Logical rows own order and selection. Each view mounts full cards around the
 viewport. Timeline uses the same task cards and calendar tracks during scrolling and at rest.
-Vertical wheel steps of half a screen or more mount the destination window in the input handler. After the
-gesture pauses, small batches prepare neighboring cards. Overlapping Timeline windows keep
+Vertical wheel steps of half a screen or more mount the destination window in the input handler.
+When the scrollbar jumps at least four screens, Timeline also mounts a compact destination window
+before paint. After the gesture pauses, small batches prepare neighboring cards. Overlapping Timeline windows keep
 recently visited cards within the row budget so a reversal can reuse them. The task and project
 timelines paint the grid from the same date boundaries as the header.
 Mobile task lists and task timelines estimate unseen row heights from settled cards and retain
