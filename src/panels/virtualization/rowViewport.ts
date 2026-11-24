@@ -58,6 +58,8 @@ export interface RowWindow {
 export type InteractiveBuffer = 'interactive' | 'search' | 'timeline';
 export type ScrollBuffer = 'initial' | 'scroll' | 'history' | 'timeline-seek' | InteractiveBuffer;
 
+const TIMELINE_ROW_BUDGET = 76;
+
 function interactiveMargins(
   buffer: InteractiveBuffer,
   height: number,
@@ -65,7 +67,7 @@ function interactiveMargins(
 ): { reserve: number; keepRows: number; refillRows: number } {
   if (buffer === 'timeline') {
     // A vertical fling can advance one screen between paints. Leave room for explicit pins.
-    const extra = Math.max(0, Math.floor((76 - visibleRows) / 2));
+    const extra = Math.max(0, Math.floor((TIMELINE_ROW_BUDGET - visibleRows) / 2));
     return { reserve: height, keepRows: extra, refillRows: extra };
   }
   return buffer === 'search'
@@ -255,12 +257,19 @@ export class RowViewport {
   #seekRange(top: number, height: number): BufferedRange {
     const first = Math.max(0, this.#geometry.boundary(top) - 1);
     const last = this.#geometry.boundary(top + height);
-    const previous = this.#range;
-    if (previous?.height === height && previous.start <= first && previous.end >= last)
-      return previous;
+    const previous = this.#range?.height === height ? this.#range : undefined;
+    if (previous !== undefined && previous.start <= first && previous.end >= last) return previous;
+    let start = Math.max(0, first - 2);
+    let end = Math.min(this.#geometry.source.length, last + 2);
+    if (previous !== undefined && previous.start < last && first < previous.end) {
+      // Keep recent rows for a reversal without mounting extra cards on a cold seek.
+      const { keepRows } = interactiveMargins('timeline', height, last - first);
+      start = Math.min(start, Math.max(previous.start, first - keepRows));
+      end = Math.max(end, Math.min(previous.end, last + keepRows));
+    }
     this.#range = {
-      start: Math.max(0, first - 2),
-      end: Math.min(this.#geometry.source.length, last + 2),
+      start,
+      end,
       height,
       buffer: 'timeline-seek',
     };
@@ -288,7 +297,7 @@ export class RowViewport {
     const bounded = { start, end, height, buffer };
     this.#range =
       buffer === 'history' && previous !== undefined
-        ? this.#keepVisited(bounded, previous, scrollTop)
+        ? this.#keepVisited(bounded, previous, scrollTop, 256)
         : bounded;
     return this.#range;
   }
@@ -305,12 +314,16 @@ export class RowViewport {
     if (previous?.buffer === buffer && previous.start <= start && previous.end >= end)
       return previous;
     const margin = reserve + Math.min(400, height * 0.48);
-    this.#range = {
+    const bounded = {
       start: Math.max(first - refillRows, this.#geometry.boundary(top - margin) - 1, 0),
       end: Math.min(last + refillRows, this.#geometry.boundary(top + height + margin)),
       height,
       buffer,
     };
+    this.#range =
+      buffer === 'timeline' && previous?.buffer === 'timeline'
+        ? this.#keepVisited(bounded, previous, top, TIMELINE_ROW_BUDGET)
+        : bounded;
     return this.#range;
   }
 
@@ -323,7 +336,12 @@ export class RowViewport {
     };
   }
 
-  #keepVisited(next: BufferedRange, previous: BufferedRange, top: number): BufferedRange {
+  #keepVisited(
+    next: BufferedRange,
+    previous: BufferedRange,
+    top: number,
+    budget: number,
+  ): BufferedRange {
     // A scrollbar jump starts a fresh window. During a continuous gesture retain
     // the rows already traversed, so reversing direction stays native.
     if (
@@ -331,7 +349,7 @@ export class RowViewport {
       top + next.height > this.#geometry.offset(previous.end) + 1
     )
       return next;
-    const capacity = Math.max(256, next.end - next.start);
+    const capacity = Math.max(budget, next.end - next.start);
     const start = Math.max(Math.min(next.start, previous.start), next.end - capacity);
     const end = Math.min(Math.max(next.end, previous.end), start + capacity);
     return { ...next, start, end };

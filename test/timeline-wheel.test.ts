@@ -49,6 +49,21 @@ it('publishes the clamped destination once for dominant vertical pixel, line and
   }
 });
 
+it('synchronizes half-viewport wheel steps in both directions and leaves shorter steps native', () => {
+  const h = wheelSurface();
+  try {
+    expect(h.wheel({ deltaY: 199 })).toBe(false);
+    expect(h.wheel({ deltaY: 200 })).toBe(true);
+    expect(h.wheel({ deltaY: -200 })).toBe(true);
+    expect(h.positions).toEqual([
+      [200, 0],
+      [0, 0],
+    ]);
+  } finally {
+    h.dispose();
+  }
+});
+
 it('leaves mixed line and page input and native value controls to the browser', () => {
   const h = wheelSurface();
   try {
@@ -120,7 +135,7 @@ it('keeps small, modified, horizontal, nested and unavailable Timeline input nat
   const h = wheelSurface();
   try {
     for (const init of [
-      { deltaY: 230 },
+      { deltaY: 150 },
       { deltaY: 800, ctrlKey: true },
       { deltaY: 800, metaKey: true },
       { deltaY: 800, shiftKey: true },

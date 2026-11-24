@@ -750,6 +750,23 @@ it('backs Kanban column and hover spacing with a finite native spacer variable',
   ).toEqual([]);
 });
 
+it('keeps both Timeline grid weights themed and the shared drawing out of hit testing', async () => {
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const css = await loadPluginStyles();
+  for (const [weight, opacity] of [
+    ['major', '74%'],
+    ['minor', '30%'],
+  ] as const) {
+    const line = cssDeclarationsFor(css, `.abyss-project-timeline-gridline.is-${weight}`);
+    expect(line.replace(/\s+/gu, '')).toContain(
+      `fill:color-mix(insrgb,var(--background-modifier-border)${opacity},transparent)`,
+    );
+  }
+  for (const selector of ['.abyss-project-timeline-grid-source', '.abyss-project-timeline-grid']) {
+    expect(cssDeclarationsFor(css, selector)).toContain('pointer-events: none');
+  }
+});
+
 it('backs Timeline sparse spacing with the native owner variable', async () => {
   const { default: ts } = await import('typescript');
   const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/projects/projectTimelineRows.ts'));

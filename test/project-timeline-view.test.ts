@@ -15,7 +15,17 @@ import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
 import { expectDefined, flushMicrotasks, freshContainer, loadPluginStyles } from './helpers';
+import { serializedPercent } from './support/cssGeometry';
 import { projectTimelineLogicalCenter } from './support/projectTimelineGeometry';
+
+function gridLinePositions(host: HTMLElement): string[] {
+  const grid = expectDefined(host.querySelector('symbol.abyss-project-timeline-grid-definition'));
+  for (const use of host.querySelectorAll('.abyss-project-timeline-grid > use'))
+    expect(use.getAttribute('href')).toBe(`#${grid.id}`);
+  return [...grid.querySelectorAll('rect')].map((rect) =>
+    serializedPercent(Number.parseFloat(expectDefined(rect.getAttribute('x')))),
+  );
+}
 
 interface Cell extends ProjectTimelineCellContext {
   project: Project;
@@ -657,14 +667,13 @@ describe('ProjectsTimelineView', () => {
     const firstGrid = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-timeline-track .abyss-project-timeline-grid'),
     );
-    const lines = Array.from(
-      firstGrid.querySelectorAll<HTMLElement>('.abyss-project-timeline-gridline'),
-    );
-
+    const positions = gridLinePositions(host);
+    expect(firstGrid.getAttribute('aria-hidden')).toBe('true');
+    expect(firstGrid.querySelector(':scope > use')).not.toBeNull();
     expect(cells.length).toBeGreaterThan(0);
-    expect(lines.length).toBeLessThanOrEqual(80);
-    expect(lines.map(({ dataset }) => dataset['day'])).toContain(cells[0]?.dataset['startDay']);
-    expect(lines.every(({ style }) => Number.isFinite(Number.parseFloat(style.left)))).toBe(true);
+    expect(positions.length).toBeGreaterThan(0);
+    expect(positions.length).toBeLessThanOrEqual(80);
+    expect(positions).toContain(expectDefined(cells[0]).style.left);
   });
 
   it('patches only visible axis and grid cells while a long Day range scrolls', async () => {
@@ -710,14 +719,10 @@ describe('ProjectsTimelineView', () => {
         '[data-project-path="Projects/Early.md"] .abyss-project-timeline-bar',
       ),
     ).toBe(bar);
-    expect(
-      Math.max(
-        ...Array.from(
-          host.querySelectorAll<HTMLElement>('.abyss-project-timeline-grid'),
-          (grid) => grid.querySelectorAll('.abyss-project-timeline-gridline').length,
-        ),
-      ),
-    ).toBeLessThanOrEqual(20);
+    const positions = gridLinePositions(host);
+    expect(positions.length).toBeGreaterThan(0);
+    expect(positions.length).toBeLessThanOrEqual(20);
+    for (const cell of visibleCells) expect(positions).toContain(cell.style.left);
   });
 
   it('uses distinct physical density for Day and Week scales', () => {
@@ -1392,19 +1397,17 @@ it('coalesces horizontal grids and vertical windows and gives fresh rows the cur
   frames.run();
   expect(old.isConnected).toBe(false);
   expect(host.querySelectorAll('.abyss-project-timeline-row').length).toBeLessThan(20);
-  const grids = [...host.querySelectorAll('.abyss-project-timeline-grid')].map((grid) =>
-    [...grid.children].map((line) => (line as HTMLElement).dataset['day']),
-  );
+  const grids = [...host.querySelectorAll('.abyss-project-timeline-grid')];
   expect(grids.length).toBeGreaterThan(0);
-  for (const grid of grids) expect(grid).toEqual(grids[0]);
+  for (const grid of grids) expect(grid.querySelector(':scope > use')).not.toBeNull();
   const marker = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-state'));
   expect(marker.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
     `${view.scroll.scrollLeft + 10}px`,
   );
-  const expectedDays = [
-    ...host.querySelectorAll<HTMLElement>('.abyss-project-timeline-axis-cell'),
-  ].map((cell) => cell.dataset['startDay']);
-  expect(grids[0]).toEqual(expect.arrayContaining(expectedDays));
+  const positions = gridLinePositions(host);
+  const cells = [...host.querySelectorAll<HTMLElement>('.abyss-project-timeline-axis-cell')];
+  expect(cells.length).toBeGreaterThan(0);
+  for (const cell of cells) expect(positions).toContain(cell.style.left);
   expect(horizontal).toHaveBeenCalledTimes(1);
   // The geometry fixture measures rows at 40px, so a real anchor correction may write vertically.
   expect(vertical.mock.calls.every(([value]) => Number.isFinite(value))).toBe(true);

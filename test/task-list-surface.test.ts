@@ -68,6 +68,7 @@ function harness(
   const host = sameHost ? scroll : scroll.createDiv();
   const pane = paneOptions(scroll, { observePane, stagedMounts });
   let inset = viewportInset;
+  const readInset = vi.fn(() => inset);
   const frames = new Map<number, FrameRequestCallback>();
   let next = 0;
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
@@ -203,7 +204,7 @@ function harness(
   const mountedChanged = vi.fn();
   const surface = new TaskListSurface(
     {
-      viewportInset: () => inset,
+      viewportInset: readInset,
       ...pane,
       host,
       scroll,
@@ -216,6 +217,7 @@ function harness(
   return {
     host,
     axis: pane.viewportInsetElement,
+    readInset,
     inset(value: number) {
       inset = value;
     },
@@ -1985,6 +1987,25 @@ it('retires a compact Timeline mount immediately when an ancestor hides the pane
   }
 });
 
+it('reuses the observed axis height on vertical Timeline scroll until a resize', async () => {
+  const h = observedTimelinePane();
+  try {
+    h.surface.update(rows(1000), presentation);
+    h.frame();
+    h.frame();
+    h.readInset.mockClear();
+    h.scrollTo(300);
+    await Promise.resolve();
+    expect(h.readInset).not.toHaveBeenCalled();
+    h.inset(160);
+    h.resize();
+    h.frame();
+    expect(h.readInset).toHaveBeenCalled();
+  } finally {
+    h.surface.destroy();
+  }
+});
+
 it('refreshes compact Timeline geometry for the pane, sticky axis, restored width and owner visibility', () => {
   const h = observedTimelinePane();
   const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
@@ -2147,6 +2168,24 @@ it('uses the opening task heights for unseen mobile rows and keeps that estimate
   }
 });
 
+it('publishes a window once when measuring an incoming row only changes its natural height', () => {
+  const h = harness(false, true, false, { scrollReservePx: 400 });
+  try {
+    h.surface.update(rows(600), presentation);
+    h.scrollTo(0.25);
+    h.frame();
+    h.heights.set('n.md:45', 49);
+    h.mountedChanged.mockClear();
+    h.scrollTo(800);
+    h.frame();
+    expect(h.surface.element('n.md:45')?.getBoundingClientRect().height).toBe(49);
+    expect(h.mountedChanged).toHaveBeenCalledTimes(1);
+    expect(h.scroll.scrollHeight).toBe(600 * 48 + 1);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
 it('publishes the destination cards before an Android list swipe is painted', async () => {
   vi.spyOn(Platform, 'isAndroidApp', 'get').mockReturnValue(true);
   const h = harness(false, true, false, { scrollReservePx: 400 });
@@ -2209,40 +2248,43 @@ it('restores a sampled list in the middle and recalibrates after its contents ch
   }
 });
 
-it('reuses settled list row heights during a fling until a resize or range change', () => {
-  const h = harness(false, false, false, { scrollReservePx: 400 });
-  try {
-    h.surface.update(rows(1000), presentation);
-    h.scrollTo(1200);
-    h.frame();
-    const keys = h.surface.mountedKeys();
-    const measure = vi.fn();
-    h.onMeasure(measure);
-    h.scrollTo(1224);
-    h.frame();
-    expect(h.surface.mountedKeys()).toEqual(keys);
-    expect(measure).not.toHaveBeenCalled();
-    // WebView sends a native echo after the touch frame published the scrollTop change.
-    h.scroll.dispatchEvent(new Event('scroll'));
-    h.frame();
-    expect(measure).not.toHaveBeenCalled();
+it.each([400, 'interactive', 'search'] as const)(
+  'reuses settled row heights with buffer %s until a resize or range change',
+  (scrollReservePx) => {
+    const h = harness(false, false, false, { scrollReservePx });
+    try {
+      h.surface.update(rows(1000), presentation);
+      h.scrollTo(1200);
+      h.frame();
+      const keys = h.surface.mountedKeys();
+      const measure = vi.fn();
+      h.onMeasure(measure);
+      h.scrollTo(1224);
+      h.frame();
+      expect(h.surface.mountedKeys()).toEqual(keys);
+      expect(measure).not.toHaveBeenCalled();
+      // WebView sends a native echo after the touch frame published the scrollTop change.
+      h.scroll.dispatchEvent(new Event('scroll'));
+      h.frame();
+      expect(measure).not.toHaveBeenCalled();
 
-    h.heights.set('n.md:20', 72);
-    h.resize();
-    h.scrollTo(1248);
-    h.frame();
-    expect(h.scroll.scrollTop).toBe(1272);
-    expect(measure).toHaveBeenCalled();
+      h.heights.set('n.md:20', 72);
+      h.resize();
+      h.scrollTo(1248);
+      h.frame();
+      expect(h.scroll.scrollTop).toBe(1272);
+      expect(measure).toHaveBeenCalled();
 
-    measure.mockClear();
-    h.scrollTo(6000);
-    h.frame();
-    expect(h.surface.mountedKeys()).not.toEqual(keys);
-    expect(measure).toHaveBeenCalled();
-  } finally {
-    h.surface.destroy();
-  }
-});
+      measure.mockClear();
+      h.scrollTo(6000);
+      h.frame();
+      expect(h.surface.mountedKeys()).not.toEqual(keys);
+      expect(measure).toHaveBeenCalled();
+    } finally {
+      h.surface.destroy();
+    }
+  },
+);
 
 it('reuses settled Timeline geometry on a native scroll and measures coalesced resize or receipt work', async () => {
   const h = observedTimelinePane();

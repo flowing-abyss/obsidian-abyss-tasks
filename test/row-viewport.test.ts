@@ -105,6 +105,37 @@ describe('shared row viewport geometry', () => {
     expect(viewport.window(8001, 400, [], 'timeline').end).toBeGreaterThan(jump.end);
   });
 
+  it('reuses already mounted Timeline rows across a reversal and bounds them during a long swipe', () => {
+    const viewport = new RowViewport();
+    viewport.replace(rows(Array.from({ length: 1000 }, (_, i) => String(i))));
+    const opening = viewport.window(8001, 400, [], 'timeline-seek');
+    const forward = viewport.window(8201, 400, [], 'timeline-seek');
+    expect(forward.start).toBe(opening.start);
+    expect(forward.end).toBe(opening.end + 5);
+    const back = viewport.window(8001, 400, [], 'timeline-seek');
+    expect([back.start, back.end]).toEqual([forward.start, forward.end]);
+    for (let top = 8201; top <= 20001; top += 200) {
+      const window = viewport.window(top, 400, [], 'timeline-seek');
+      expect(window.end - window.start).toBeLessThanOrEqual(76);
+      expect(window.start).toBeLessThanOrEqual(Math.floor(top / 40));
+      expect(window.end * 40).toBeGreaterThanOrEqual(top + 400);
+    }
+  });
+
+  it('retains the native Timeline runway through a short reversal without remounting visited rows', () => {
+    const viewport = new RowViewport();
+    viewport.replace(rows(Array.from({ length: 1000 }, (_, i) => String(i))));
+    const opening = viewport.window(8000, 400, [], 'timeline');
+    const forward = viewport.window(8400, 400, [], 'timeline');
+    const back = viewport.window(8000, 400, [], 'timeline');
+    expect(forward.start).toBe(opening.start);
+    expect(forward.end * 40).toBeGreaterThanOrEqual(9200);
+    expect([back.start, back.end]).toEqual([forward.start, forward.end]);
+    const distant = viewport.window(28000, 400, [], 'timeline');
+    expect(distant.start).toBeGreaterThan(forward.end);
+    expect(distant.end - distant.start).toBeLessThanOrEqual(76);
+  });
+
   it('preserves the exact-boundary anchor through a measurement batch', () => {
     const v = new RowViewport();
     v.replace(rows(['a', 'b', 'c']));

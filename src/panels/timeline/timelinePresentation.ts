@@ -5,7 +5,6 @@ import type {
 } from '../../projects/projectTimelineAxis';
 import type { ProjectTimelineWindow } from '../../projects/projectTimelineModel';
 import type { ProjectTimelineScale } from '../../projects/projectTimelineSettings';
-import { isRealmHTMLElement } from '../../ui/domRealm';
 
 export const TIMELINE_SCALES = [
   ['day', 'Day'],
@@ -104,18 +103,38 @@ function patchAxisLabel(host: HTMLElement, className: string, text: string | und
   if (label.textContent !== text) label.textContent = text;
 }
 
-export function patchTimelineGrid(grid: HTMLElement, layout: ProjectTimelineAxisLayout): void {
+/** Each timeline owns one calendar slice; row-local references preserve row clipping and layering. */
+export function createTimelineGrid(axis: HTMLElement): SVGSymbolElement {
+  const source = axis.createSvg('svg', {
+    cls: 'abyss-project-timeline-grid-source',
+    attr: { width: '0', height: '0', 'aria-hidden': 'true' },
+  });
+  return source.createSvg('symbol', {
+    cls: 'abyss-project-timeline-grid-definition',
+    attr: { id: `abyss-timeline-grid-${axis.win.crypto.randomUUID()}` },
+  });
+}
+
+export function mountTimelineGrid(track: HTMLElement, grid: SVGSymbolElement): SVGUseElement {
+  return track
+    .createSvg('svg', {
+      cls: 'abyss-project-timeline-grid',
+      attr: { width: '100%', height: '100%', 'aria-hidden': 'true' },
+    })
+    .createSvg('use', { attr: { href: `#${grid.id}`, width: '100%', height: '100%' } });
+}
+
+export function patchTimelineGrid(grid: SVGSymbolElement, layout: ProjectTimelineAxisLayout): void {
   const boundaries = layout.gridBoundaries;
-  while (grid.children.length > boundaries.length) grid.lastElementChild?.remove();
-  while (grid.children.length < boundaries.length) {
-    grid.appendChild(grid.ownerDocument.createElement('span'));
-  }
+  while (grid.childElementCount > boundaries.length) grid.lastElementChild?.remove();
   for (const [index, boundary] of boundaries.entries()) {
-    const line = grid.children.item(index);
-    if (!isRealmHTMLElement(line)) continue;
-    line.dataset['day'] = boundary.day;
-    line.className = `abyss-project-timeline-gridline is-${boundary.weight}`;
-    line.style.left = `${String(boundary.leftPercent)}%`;
+    const line =
+      grid.children.item(index) ?? grid.createSvg('rect', { attr: { width: '1', height: '100%' } });
+    const x = `${boundary.leftPercent}%`;
+    if (line.getAttribute('x') !== x) line.setAttribute('x', x);
+    if (line.getAttribute('data-day') !== boundary.day) line.setAttribute('data-day', boundary.day);
+    const className = `abyss-project-timeline-gridline is-${boundary.weight}`;
+    if (line.getAttribute('class') !== className) line.setAttribute('class', className);
   }
 }
 

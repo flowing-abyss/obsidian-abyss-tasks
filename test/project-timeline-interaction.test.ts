@@ -1163,9 +1163,52 @@ it('reprojects cancellation after several window moves instead of restoring stal
   }
 });
 
+it('retargets a stationary hover after rows move and clears it outside the track', () => {
+  const h = mount();
+  const row = expectDefined(h.track.parentElement);
+  const next = h.scroll.appendChild(row.cloneNode(true)) as HTMLElement;
+  const newTrack = expectDefined(next.querySelector<HTMLElement>('.abyss-project-timeline-track'));
+  vi.spyOn(newTrack, 'getBoundingClientRect').mockReturnValue(geometry(5, 100));
+  const hit = vi.fn<Document['elementFromPoint']>().mockReturnValue(newTrack);
+  Object.defineProperty(h.root.ownerDocument, 'elementFromPoint', {
+    configurable: true,
+    value: hit,
+  });
+  const tooltip = expectDefined(
+    h.root.querySelector<HTMLElement>('.abyss-project-timeline-tooltip'),
+  );
+  try {
+    h.track.dispatchEvent(pointerEvent('pointermove', 25));
+    expect(cursorLeftPercent(h.root)).toBe(15);
+    h.interaction.reconcileAfterRender();
+    expect(hit).toHaveBeenLastCalledWith(25, 30);
+    expect(newTrack.querySelector('.abyss-project-timeline-cursor')).not.toBeNull();
+    expect(cursorLeftPercent(h.root)).toBe(20);
+    hit.mockReturnValue(h.scroll.createDiv({ cls: 'abyss-project-timeline-group-header' }));
+    h.interaction.reconcileAfterRender();
+    expect(tooltip.hidden).toBe(true);
+    hit.mockReturnValue(h.track);
+    h.interaction.reconcileAfterRender();
+    expect(tooltip.hidden).toBe(false);
+    expect(h.track.querySelector('.abyss-project-timeline-cursor')).not.toBeNull();
+    hit.mockReturnValue(null);
+    newTrack.remove();
+    h.interaction.reconcileAfterRender();
+    expect(tooltip.hidden).toBe(true);
+  } finally {
+    Reflect.deleteProperty(h.root.ownerDocument, 'elementFromPoint');
+    h.interaction.destroy();
+    h.root.remove();
+  }
+});
+
 it('keeps a hovered calendar position under the pointer when its window rebases', () => {
   const window = { ...defaultWindow };
   const h = mount(source().range, window);
+  Object.defineProperty(h.root.ownerDocument, 'elementFromPoint', {
+    configurable: true,
+    value: () => h.track,
+  });
   try {
     h.track.dispatchEvent(pointerEvent('pointermove', 25));
     expect(cursorLeftPercent(h.root)).toBe(15);
@@ -1174,6 +1217,7 @@ it('keeps a hovered calendar position under the pointer when its window rebases'
     h.interaction.reconcileAfterRender();
     expect(cursorLeftPercent(h.root)).toBe(35);
   } finally {
+    Reflect.deleteProperty(h.root.ownerDocument, 'elementFromPoint');
     h.interaction.destroy();
     h.root.remove();
   }

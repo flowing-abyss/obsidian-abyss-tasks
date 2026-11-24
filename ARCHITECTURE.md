@@ -150,12 +150,16 @@ Opening a menu on one task must still target that task if the inspector selectio
 **Collections and search.** List, Kanban, and Timeline share the task list surface and card
 interactions. Logical rows own order and selection. Each view mounts full cards around the
 viewport. Timeline uses the same task cards and calendar tracks during scrolling and at rest.
-Screen-sized vertical wheel steps mount the destination window in the input handler. After the
-gesture pauses, small batches prepare neighboring cards. Mobile task lists use the first settled
-cards to estimate the height of unseen tasks. They retain that estimate with the scroll position
-when the user returns to the view. Android lists and Timeline task summaries apply vertical
-swipes and their momentum on the same frame as the destination cards. Touching a row stops
-that motion before the tap is handled. Calendar tracks keep their range-edit gestures.
+Vertical wheel steps of half a screen or more mount the destination window in the input handler. After the
+gesture pauses, small batches prepare neighboring cards. Overlapping Timeline windows keep
+recently visited cards within the row budget so a reversal can reuse them. The task and project
+timelines paint the grid from the same date boundaries as the header.
+Mobile task lists and task timelines estimate unseen row heights from settled cards and retain
+the estimate with the scroll position. Timeline measures wrapping at the width of the task
+summary and recalibrates when that width or the card layout changes. On Android the task list
+and Timeline publish the destination cards with each vertical swipe and commit the final finger
+position on release. A new touch stops the remaining momentum. Calendar tracks keep their
+range-edit gestures.
 Compact collections batch exact-source lookups and prioritize tasks in the viewport. The search service
 discards stale addresses. [TaskSearchService](src/tasks/infrastructure/search/TaskSearchService.ts)
 

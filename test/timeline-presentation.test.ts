@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createTimelineGrid,
   createTimelineNavigation,
+  mountTimelineGrid,
   patchTimelineAxisCells,
+  patchTimelineGrid,
   patchTimelineToday,
 } from '../src/panels/timeline/timelinePresentation';
 import { projectTimelineAxisLayout } from '../src/projects/projectTimelineAxis';
@@ -16,6 +19,45 @@ function slice(start: string, end: string) {
     todayDay: '2024-02-29',
   });
 }
+
+it('shares one correctly positioned one-pixel grid across tracks and adopted documents', () => {
+  const host = document.body.createDiv();
+  const other = host.createDiv();
+  const grid = createTimelineGrid(host);
+  const siblingGrid = createTimelineGrid(other);
+  const first = mountTimelineGrid(host.createDiv(), grid);
+  const second = mountTimelineGrid(host.createDiv(), grid);
+  const layout = slice('2024-02-25', '2024-03-06');
+  patchTimelineGrid(grid, layout);
+  expect(grid.id).not.toBe(siblingGrid.id);
+  expect(first.getAttribute('href')).toBe(`#${grid.id}`);
+  expect(second.getAttribute('href')).toBe(first.getAttribute('href'));
+  expect(new Set(layout.gridBoundaries.map(({ weight }) => weight))).toEqual(
+    new Set(['minor', 'major']),
+  );
+  expect(
+    [...grid.children].map((rect) => [
+      rect.getAttribute('data-day'),
+      rect.getAttribute('x'),
+      rect.getAttribute('width'),
+      rect.getAttribute('height'),
+      rect.getAttribute('class'),
+    ]),
+  ).toEqual(
+    layout.gridBoundaries.map((line) => [
+      line.day,
+      `${line.leftPercent}%`,
+      '1',
+      '100%',
+      `abyss-project-timeline-gridline is-${line.weight}`,
+    ]),
+  );
+  const target = document.implementation.createHTMLDocument('Popout');
+  target.body.append(host);
+  expect(target.getElementById(first.getAttribute('href')?.slice(1) ?? '')).toBe(grid);
+  patchTimelineGrid(grid, { ...layout, gridBoundaries: [] });
+  expect(grid.childElementCount).toBe(0);
+});
 
 describe('retained Timeline presentation', () => {
   it.each([false, true])(

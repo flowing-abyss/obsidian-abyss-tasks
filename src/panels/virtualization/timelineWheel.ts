@@ -1,4 +1,5 @@
 import { isRealmHTMLElement } from '../../ui/domRealm';
+import { isLargeScrollStep } from './verticalScrollIntent';
 
 function ownsWheelAxis(overflow: string, overscroll: string, canMove: () => boolean): boolean {
   if (!['auto', 'scroll', 'hidden'].includes(overflow)) return false;
@@ -57,7 +58,7 @@ function wheelUnit(scroll: HTMLElement, event: WheelEvent): number {
   return Number.parseFloat(style?.lineHeight ?? '');
 }
 
-/** Keep screen-sized wheel jumps on the same frame as the canonical Timeline cards. */
+/** Keep fast wheel steps on the same frame as the canonical Timeline cards. */
 export function bindTimelineWheel(
   scroll: HTMLElement,
   canPublish: () => boolean,
@@ -67,7 +68,7 @@ export function bindTimelineWheel(
     if (!isVerticalWheel(event)) return;
     const unit = wheelUnit(scroll, event);
     const dy = event.deltaY * unit;
-    if (!Number.isFinite(dy) || Math.abs(dy) < scroll.clientHeight) return;
+    if (!Number.isFinite(dy) || !isLargeScrollStep(dy, scroll.clientHeight)) return;
     const top = scroll.scrollTop;
     const next = Math.max(0, Math.min(top + dy, scroll.scrollHeight - scroll.clientHeight));
     if (top === next || !canPublish() || hasNestedScroller(event, scroll)) return;

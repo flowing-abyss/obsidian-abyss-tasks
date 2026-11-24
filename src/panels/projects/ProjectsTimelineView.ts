@@ -13,10 +13,7 @@ import {
   setProjectGroupCollapsed,
 } from '../../projects/projectGroupCollapse';
 import type { ProjectTableGroup } from '../../projects/projectTableModel';
-import {
-  projectTimelineAxisLayout,
-  type ProjectTimelineAxisLayout,
-} from '../../projects/projectTimelineAxis';
+import { projectTimelineAxisLayout } from '../../projects/projectTimelineAxis';
 import {
   buildProjectTimelineModel,
   projectTimelineBarGeometry,
@@ -43,8 +40,10 @@ import {
 import type { Project } from '../../projects/types';
 import { isRealmHTMLElement, isRealmNode } from '../../ui/domRealm';
 import {
+  createTimelineGrid,
   createTimelineNavigation,
   createTimelineRangeHandle,
+  mountTimelineGrid,
   patchTimelineAxisCells,
   patchTimelineGrid,
   patchTimelineRangeStateOffsets,
@@ -135,7 +134,6 @@ interface RenderedRow<TCell extends ProjectTimelineCellContext> {
   readonly metadata: HTMLElement;
   readonly progress: HTMLElement;
   readonly track: HTMLElement;
-  readonly grid: HTMLElement;
   readonly bar: HTMLElement;
   readonly startHandle: HTMLElement;
   readonly endHandle: HTMLElement;
@@ -275,6 +273,7 @@ export class ProjectsTimelineView<
   private readonly axisHierarchy_abyssPrivate: HTMLElement;
   private readonly axisCells_abyssPrivate: HTMLElement;
   private readonly groupsHost_abyssPrivate: HTMLElement;
+  private readonly grid_abyssPrivate: SVGSymbolElement;
   private readonly rows_abyssPrivate = new Map<string, RenderedRow<TCell>>();
   private readonly rowMounts_abyssPrivate: ProjectTimelineRows;
   private readonly gestureReleases_abyssPrivate = new Map<string, () => void>();
@@ -306,11 +305,6 @@ export class ProjectsTimelineView<
     HTMLButtonElement
   >();
   private readonly interaction_abyssPrivate: ProjectTimelinePointerInteraction;
-  private axisLayout_abyssPrivate: ProjectTimelineAxisLayout = {
-    cells: [],
-    hierarchyCells: [],
-    gridBoundaries: [],
-  };
 
   constructor(
     host: HTMLElement,
@@ -354,6 +348,7 @@ export class ProjectsTimelineView<
       cls: 'abyss-project-timeline-axis-cells',
       attr: { 'aria-hidden': 'true' },
     });
+    this.grid_abyssPrivate = createTimelineGrid(this.axisDates_abyssPrivate);
     this.groupsHost_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-groups' });
     this.scroll.addEventListener('scroll', this.scrollChanged_abyssPrivate, {
       passive: true,
@@ -837,20 +832,21 @@ export class ProjectsTimelineView<
   private patchAxis_abyssPrivate(window: ProjectTimelineWindow): void {
     const today = localDay((this.context_abyssPrivate.now ?? (() => new Date()))());
     const visible = this.visibleAxisSlice_abyssPrivate(window);
-    this.axisLayout_abyssPrivate = projectTimelineAxisLayout(window, {
+    const layout = projectTimelineAxisLayout(window, {
       ...visible,
       overscanCells: 1,
       todayDay: today,
     });
+    patchTimelineGrid(this.grid_abyssPrivate, layout);
     this.axisRange_abyssPrivate.setText(`${visible.visibleStartDay} – ${visible.visibleEndDay}`);
     patchTimelineAxisCells(
       this.axisHierarchy_abyssPrivate,
-      this.axisLayout_abyssPrivate.hierarchyCells,
+      layout.hierarchyCells,
       'abyss-project-timeline-axis-hierarchy-cell',
     );
     patchTimelineAxisCells(
       this.axisCells_abyssPrivate,
-      this.axisLayout_abyssPrivate.cells,
+      layout.cells,
       `abyss-project-timeline-axis-cell${window.scale === 'day' ? ' is-day' : ''}`,
     );
     this.addTodayMarker_abyssPrivate(this.axisDates_abyssPrivate, window);
@@ -861,10 +857,9 @@ export class ProjectsTimelineView<
     dayChanged = false,
   ): void {
     this.patchAxis_abyssPrivate(window);
-    for (const row of this.rows_abyssPrivate.values()) {
-      patchTimelineGrid(row.grid, this.axisLayout_abyssPrivate);
-      if (dayChanged) this.addTodayMarker_abyssPrivate(row.track, window);
-    }
+    if (dayChanged)
+      for (const row of this.rows_abyssPrivate.values())
+        this.addTodayMarker_abyssPrivate(row.track, window);
   }
 
   private addTodayMarker_abyssPrivate(host: HTMLElement, window: ProjectTimelineWindow): void {
@@ -1061,10 +1056,7 @@ export class ProjectsTimelineView<
       attr: rangeTargetAttributes('track'),
     });
     const accessibility = this.createRangeAccessibility_abyssPrivate(track);
-    const grid = track.createDiv({
-      cls: 'abyss-project-timeline-grid',
-      attr: { 'aria-hidden': 'true' },
-    });
+    mountTimelineGrid(track, this.grid_abyssPrivate);
     const bar = track.createDiv({
       cls: 'abyss-project-timeline-bar',
       attr: { ...rangeTargetAttributes('bar'), ...accessibility.attributes },
@@ -1081,7 +1073,6 @@ export class ProjectsTimelineView<
       metadata: summary.createDiv({ cls: 'abyss-project-timeline-metadata' }),
       progress: summary.createDiv({ cls: 'abyss-project-timeline-progress' }),
       track,
-      grid,
       bar,
       startHandle,
       endHandle,
@@ -1303,7 +1294,6 @@ export class ProjectsTimelineView<
     left = this.lastLeft_abyssPrivate,
   ): void {
     this.addTodayMarker_abyssPrivate(row.track, window);
-    patchTimelineGrid(row.grid, this.axisLayout_abyssPrivate);
     this.patchRangeEditability_abyssPrivate(row);
     const geometry = projectTimelineBarGeometry(range, window);
     if (geometry === undefined) {

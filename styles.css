@@ -8629,26 +8629,19 @@ body .abyss-project-timeline-scroll::-webkit-scrollbar {
   touch-action: none;
 }
 
+.abyss-project-timeline-grid-source,
 .abyss-project-timeline-grid {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 
-.abyss-project-timeline-gridline {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: color-mix(in srgb, var(--background-modifier-border) 48%, transparent);
-}
-
 .abyss-project-timeline-gridline.is-minor {
-  background: color-mix(in srgb, var(--background-modifier-border) 30%, transparent);
+  fill: color-mix(in srgb, var(--background-modifier-border) 30%, transparent);
 }
 
 .abyss-project-timeline-gridline.is-major {
-  background: color-mix(in srgb, var(--background-modifier-border) 74%, transparent);
+  fill: color-mix(in srgb, var(--background-modifier-border) 74%, transparent);
 }
 
 .abyss-project-timeline-axis button:focus-visible,

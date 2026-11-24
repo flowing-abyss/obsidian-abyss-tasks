@@ -3193,10 +3193,10 @@ export class CenterPanel {
   }
 
   private taskRowHeights_abyssPrivate(): TaskRowHeights {
+    const view = this.taskCollectionView_abyssPrivate();
     if (
-      Platform.isMobile &&
       this.isTaskCollection_abyssPrivate() &&
-      this.taskCollectionView_abyssPrivate() === 'list'
+      (view === 'timeline' || (Platform.isMobile && view === 'list'))
     )
       return { ...initialRowHeights, sampleOpeningTasks: true };
     return initialRowHeights;

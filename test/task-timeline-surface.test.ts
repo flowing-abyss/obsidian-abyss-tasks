@@ -108,8 +108,16 @@ function continuousTimeline(
     host: HTMLElement,
     layout: TimelineContextOverlayLayout,
   ) => TimelineContextOverlay,
-  rowCount = 1,
+  list:
+    | number
+    | {
+        count: number;
+        height: number;
+        restore?: ReturnType<TaskTimelineSurface<TaskPlanning>['captureScroll']>;
+      } = 1,
 ) {
+  const calibration = typeof list === 'number' ? undefined : list;
+  const rowCount = typeof list === 'number' ? list : list.count;
   const host = document.body.createDiv({ cls: 'abyss-center-scroll' });
   prepareTaskPanelViewport(host);
   let width = initialWidth;
@@ -140,9 +148,17 @@ function continuousTimeline(
       },
       mount: (parent) => {
         const element = parent.createDiv({ cls: 'abyss-task-card' });
+        const sizeRow = () => {
+          if (calibration !== undefined)
+            expectDefined(parent.parentElement).style.height = `${calibration.height}px`;
+        };
+        sizeRow();
         return {
           element,
-          update: updates,
+          update: () => {
+            sizeRow();
+            updates();
+          },
           destroy: () => {
             element.remove();
           },
@@ -177,6 +193,9 @@ function continuousTimeline(
     surface.update(rows, {
       revision: 'one',
       preserveAnchor: true,
+      ...(calibration !== undefined && {
+        indexedHeights: { task: 64, group: 32, sampleOpeningTasks: true },
+      }),
       estimate: () => 64,
       measurementRevision: () => '',
     });
@@ -202,8 +221,11 @@ function continuousTimeline(
       host.scrollLeft
     );
   };
+  if (calibration?.restore !== undefined) surface.restoreScroll(calibration.restore);
   update();
   return {
+    settings,
+    summary,
     host,
     surface,
     updates,
@@ -227,6 +249,50 @@ function continuousTimeline(
     },
   };
 }
+
+it('calibrates Timeline rows to their summary and preserves a deep anchor across width, card settings and reopen', () => {
+  // The measured height takes the full source above the native million-pixel ceiling.
+  const geometry = { count: 12000, height: 96 };
+  const h = continuousTimeline(900, undefined, undefined, geometry);
+  try {
+    const initial = h.surface.captureScroll().rows.taskHeightSample;
+    expect(initial).toMatchObject({ width: 180, height: 96 });
+    h.button('Day').click();
+    expect(h.surface.captureScroll().rows.taskHeightSample).toBe(initial);
+    h.host.scrollTop = 640000;
+    h.host.dispatchEvent(new Event('scroll'));
+    h.flush();
+    const first = expectDefined(h.surface.captureScroll().rows.anchor);
+    expect(h.surface.element(first.key)?.isConnected).toBe(true);
+    geometry.height = 120;
+    vi.spyOn(h.summary, 'getBoundingClientRect').mockReturnValue({ width: 150 } as DOMRect);
+    h.update();
+    const resized = h.surface.captureScroll();
+    expect(resized.rows.taskHeightSample).toMatchObject({ width: 150, height: 120 });
+    expect(resized.rows.anchor).toMatchObject({ key: first.key, offset: first.offset });
+    geometry.height = 76;
+    h.settings.showMetadata = !h.settings.showMetadata;
+    h.update();
+    const changed = h.surface.captureScroll();
+    expect(changed.rows.taskHeightSample).toMatchObject({ width: 150, height: 76 });
+    expect(changed.rows.anchor).toMatchObject({ key: first.key, offset: first.offset });
+    const restored = continuousTimeline(900, undefined, undefined, {
+      count: 12000,
+      height: 96,
+      restore: changed,
+    });
+    try {
+      const result = restored.surface.captureScroll().rows;
+      expect(result.taskHeightSample).toMatchObject({ width: 180, height: 96 });
+      expect(result.anchor).toMatchObject({ key: first.key, offset: first.offset });
+      expect(restored.surface.element(first.key)?.isConnected).toBe(true);
+    } finally {
+      restored.dispose();
+    }
+  } finally {
+    h.dispose();
+  }
+});
 
 it('keeps a screenful of task rows ready before each fast vertical step and reversal', () => {
   const h = continuousTimeline(900, undefined, undefined, 5000);
@@ -314,22 +380,29 @@ it('reuses the calendar grid while mounting new rows on a vertical fling', () =>
   try {
     h.flush();
     const grid = () => expectDefined(h.host.querySelector('.abyss-project-timeline-grid'));
-    const expected = grid().innerHTML;
-    expect(grid().childElementCount).toBeGreaterThan(0);
+    const definition = expectDefined(
+      h.host.querySelector('symbol.abyss-project-timeline-grid-definition'),
+    );
+    const positions = () => [...definition.children].map((line) => line.getAttribute('x'));
+    const expected = positions();
+    expect(expected.length).toBeGreaterThan(0);
+    expect(grid().querySelector('use')?.getAttribute('href')).toBe(`#${definition.id}`);
     const patch = vi.spyOn(timelinePresentation, 'patchTimelineGrid');
     overlayUpdate.mockClear();
     h.host.scrollTop = 32000;
     h.host.dispatchEvent(new Event('scroll'));
     h.flush();
     expect(h.surface.element('row:505')?.isConnected).toBe(true);
-    expect(grid().innerHTML).toBe(expected);
+    expect(positions()).toEqual(expected);
+    expect(grid().querySelector('use')?.getAttribute('href')).toBe(`#${definition.id}`);
     expect(patch).not.toHaveBeenCalled();
     expect(overlayUpdate).not.toHaveBeenCalled();
     h.host.scrollLeft += 400;
     h.host.dispatchEvent(new Event('scroll'));
     h.flush();
     expect(overlayUpdate).toHaveBeenCalled();
-    expect(grid().innerHTML).not.toBe(expected);
+    expect(positions()).not.toEqual(expected);
+    expect(patch).toHaveBeenCalledTimes(1);
   } finally {
     h.dispose();
   }

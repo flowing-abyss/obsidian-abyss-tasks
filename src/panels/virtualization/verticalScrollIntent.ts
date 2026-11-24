@@ -1,3 +1,8 @@
+/** A half-screen step can expose rows before the next scheduled scroll frame. */
+export function isLargeScrollStep(delta: number, viewportHeight: number): boolean {
+  return Math.abs(delta) >= viewportHeight / 2;
+}
+
 /** Prepare the active viewport before its first vertical wheel step or single-finger swipe. */
 export function onVerticalScrollIntent(scroll: HTMLElement, prepare: () => void): () => void {
   let start: { x: number; y: number } | undefined;

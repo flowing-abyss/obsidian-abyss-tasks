@@ -96,12 +96,12 @@ function pointerPart(element: HTMLElement): TimelinePointerPart | undefined {
     : undefined;
 }
 
-function eventTimelineTarget(event: Event): HTMLElement | undefined {
-  if (!isRealmHTMLElement(event.target)) return undefined;
-  const nestedControl = event.target.closest(NESTED_CONTROL_SELECTOR);
+function timelineTarget(target: EventTarget | null): HTMLElement | undefined {
+  if (!isRealmHTMLElement(target)) return undefined;
+  const nestedControl = target.closest(NESTED_CONTROL_SELECTOR);
   return nestedControl !== null && !nestedControl.hasAttribute('data-timeline-part')
     ? undefined
-    : event.target;
+    : target;
 }
 
 function isOneDateRange(range: ProjectTimelineRange): boolean {
@@ -220,7 +220,7 @@ function edgeDirection(clientX: number, bounds: DOMRect): -1 | 0 | 1 {
 export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   private active_abyssPrivate: ActivePointerGesture<Source> | undefined;
   private hoverPosition_abyssPrivate:
-    { readonly track: HTMLElement; readonly clientX: number } | undefined;
+    { readonly clientX: number; readonly clientY: number } | undefined;
   private readonly pending_abyssPrivate = new Map<string, PendingPointerPreview<Source>>();
   private previewSequence_abyssPrivate = 0;
   private destroyed_abyssPrivate = false;
@@ -353,8 +353,16 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
 
   private reprojectHover_abyssPrivate(): void {
     const hover = this.hoverPosition_abyssPrivate;
-    if (this.active_abyssPrivate === undefined && hover?.track.isConnected === true)
-      this.showCursor_abyssPrivate(hover.track, hover.clientX);
+    if (this.active_abyssPrivate !== undefined || hover === undefined) return;
+    const { root } = this.context_abyssPrivate;
+    const hit = root.ownerDocument.elementFromPoint(hover.clientX, hover.clientY);
+    if (!root.contains(hit)) {
+      this.hideOverlays_abyssPrivate();
+      return;
+    }
+    this.updateHover_abyssPrivate(hit, hover.clientX, hover.clientY);
+    // A group heading can pass under a stationary mouse before the next track arrives.
+    this.hoverPosition_abyssPrivate = hover;
   }
 
   private cancelGesture_abyssPrivate(restorePreview: boolean): void {
@@ -419,8 +427,8 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     }
   }
 
-  private target_abyssPrivate(event: Event): TimelinePointerTarget | undefined {
-    const eventTarget = eventTimelineTarget(event);
+  private target_abyssPrivate(target: EventTarget | null): TimelinePointerTarget | undefined {
+    const eventTarget = timelineTarget(target);
     if (eventTarget === undefined) return undefined;
     const partElement = eventTarget.closest<HTMLElement>('[data-timeline-part]');
     if (partElement === null) return undefined;
@@ -453,8 +461,11 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     }
   }
 
-  private dayAtClientX_abyssPrivate(track: HTMLElement, clientX: number): string | undefined {
-    const bounds = track.getBoundingClientRect();
+  private dayAtClientX_abyssPrivate(
+    track: HTMLElement,
+    clientX: number,
+    bounds = track.getBoundingClientRect(),
+  ): string | undefined {
     const window = this.context_abyssPrivate.window();
     const first = projectCalendarDayOrdinal(window.startDay);
     if (bounds.width <= 0 || first === undefined || window.dayCount <= 0) return undefined;
@@ -464,7 +475,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
 
   private readonly pointerDown_abyssPrivate = (event: PointerEvent): void => {
     if (this.destroyed_abyssPrivate || event.button !== 0 || !event.isPrimary) return;
-    const target = this.target_abyssPrivate(event);
+    const target = this.target_abyssPrivate(event.target);
     if (target === undefined) return;
     const startDay = this.dayAtClientX_abyssPrivate(target.track, event.clientX);
     if (startDay === undefined) return;
@@ -512,12 +523,22 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
 
   private readonly hover_abyssPrivate = (event: PointerEvent): void => {
     if (this.active_abyssPrivate !== undefined) return;
-    const target = this.target_abyssPrivate(event);
-    if (target !== undefined) {
-      this.hoverPosition_abyssPrivate = { track: target.track, clientX: event.clientX };
-      this.showCursor_abyssPrivate(target.track, event.clientX);
-    }
+    this.updateHover_abyssPrivate(event.target, event.clientX, event.clientY);
   };
+
+  private updateHover_abyssPrivate(
+    hit: EventTarget | null,
+    clientX: number,
+    clientY: number,
+  ): void {
+    const target = this.target_abyssPrivate(hit);
+    if (target === undefined) {
+      this.hideOverlays_abyssPrivate();
+      return;
+    }
+    this.hoverPosition_abyssPrivate = { clientX, clientY };
+    this.showCursor_abyssPrivate(target.track, clientX);
+  }
 
   private readonly pointerMove_abyssPrivate = (event: PointerEvent): void => {
     const active = this.active_abyssPrivate;
@@ -720,14 +741,17 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   }
 
   private showCursor_abyssPrivate(track: HTMLElement, clientX: number): void {
-    const day = this.dayAtClientX_abyssPrivate(track, clientX);
-    if (day === undefined) return;
     const bounds = track.getBoundingClientRect();
+    const day = this.dayAtClientX_abyssPrivate(track, clientX, bounds);
+    if (day === undefined) {
+      this.hideOverlays_abyssPrivate();
+      return;
+    }
     const fraction = Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width));
     this.placeCursor_abyssPrivate(track, `${fraction * 100}%`);
     if (this.active_abyssPrivate === undefined) {
       this.tooltip_abyssPrivate.setText(day);
-      this.showTooltip_abyssPrivate(clientX, track);
+      this.showTooltip_abyssPrivate(clientX, track, bounds);
     }
   }
 
@@ -737,7 +761,11 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     this.cursor_abyssPrivate.style.left = left;
   }
 
-  private showTooltip_abyssPrivate(clientX: number, track: HTMLElement): void {
+  private showTooltip_abyssPrivate(
+    clientX: number,
+    track: HTMLElement,
+    bounds = track.getBoundingClientRect(),
+  ): void {
     this.tooltip_abyssPrivate.hidden = false;
     const ownerWindow = this.ownerWindow_abyssPrivate;
     const viewportWidth =
@@ -748,7 +776,6 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     const width = tooltipBounds.width > 0 ? tooltipBounds.width : 210;
     const height = tooltipBounds.height > 0 ? tooltipBounds.height : 26;
     const left = Math.max(8, Math.min(viewportWidth - width - 8, clientX + 12));
-    const bounds = track.getBoundingClientRect();
     const above = bounds.top - height - 8;
     const top =
       above >= 8 ? above : Math.max(8, Math.min(viewportHeight - height - 8, bounds.bottom + 8));

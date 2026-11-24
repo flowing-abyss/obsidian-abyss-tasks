@@ -49,8 +49,10 @@ import {
   type TimelineRangeSource,
 } from '../timeline/TimelinePointerInteraction';
 import {
+  createTimelineGrid,
   createTimelineNavigation,
   createTimelineRangeHandle,
+  mountTimelineGrid,
   patchTimelineAxisCells,
   patchTimelineGrid,
   patchTimelineRangeStateOffsets,
@@ -84,7 +86,6 @@ interface TimelineMount<T> {
   readonly element: HTMLElement;
   readonly card: TaskRowMount<T>;
   readonly track: HTMLElement;
-  readonly grid: HTMLElement;
   readonly bar: HTMLElement;
   readonly state: HTMLButtonElement;
   readonly scheduledTrack: HTMLElement;
@@ -117,13 +118,13 @@ const scheduledSuffix = '\u0000scheduled';
 export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   readonly #viewport: TaskListSurface<T>;
   readonly #axis: HTMLElement;
-  readonly #gridTemplate: HTMLElement;
   readonly #contextOverlay: TimelineContextOverlay | undefined;
   readonly #summary: HTMLElement;
   readonly #dates: HTMLElement;
   readonly #hierarchy: HTMLElement;
   readonly #cells: HTMLElement;
   readonly #rowsHost: HTMLElement;
+  readonly #grid: SVGSymbolElement;
   readonly #buttons: Map<ProjectTimelineScale, HTMLButtonElement>;
   readonly #mounts = new Map<string, TimelineMount<T>>();
   readonly #pins = new Map<string, () => void>();
@@ -135,6 +136,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   #calendarPending = false;
   #geometry: TimelineViewport;
   #usableWidth = 0;
+  readonly #rowLayout = { width: -1, variant: '' };
   #lastLeft = 0;
   #stateOffsets = timelineRangeStateOffsets(0, 0);
   #rowOffsets = this.#stateOffsets;
@@ -179,15 +181,14 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       cls: 'abyss-project-timeline-axis-cells',
       attr: { 'aria-hidden': 'true' },
     });
-    this.#gridTemplate = options.host.ownerDocument.createElement('div');
-    this.#gridTemplate.className = 'abyss-project-timeline-grid';
-    this.#gridTemplate.setAttribute('aria-hidden', 'true');
+    this.#grid = createTimelineGrid(this.#dates);
     this.#contextOverlay = this.#mountContext();
     this.#rowsHost = options.host.createDiv({ cls: 'abyss-task-timeline-rows' });
     this.#viewport = new TaskListSurface(
       {
         ...options,
         host: this.#rowsHost,
+        rowLayout: () => this.#rowLayout,
         viewportInset: () => this.#axis.getBoundingClientRect().height,
         viewportInsetElement: this.#axis,
         beforeRowWrites: this.#sampleRowOffsets,
@@ -307,6 +308,12 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       this.#scale = settings.scale;
       this.#interaction.cancelActive();
     }
+    this.#rowLayout.variant = JSON.stringify([
+      presentation.revision,
+      settings.descriptionLines,
+      settings.showMetadata,
+      settings.showScheduled,
+    ]);
     this.options.host.dataset['descriptionLines'] = String(settings.descriptionLines);
     this.options.host.toggleClass('abyss-task-timeline--hide-metadata', !settings.showMetadata);
     this.#calendar();
@@ -469,8 +476,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       cls: 'abyss-project-timeline-track',
       attr: { tabindex: '0', 'data-timeline-part': 'track' },
     });
-    const grid = this.#gridTemplate.cloneNode(true) as HTMLElement;
-    track.appendChild(grid);
+    mountTimelineGrid(track, this.#grid);
     const bar = track.createDiv({
       cls: 'abyss-project-timeline-bar',
       attr: { tabindex: '0', role: 'button', 'data-timeline-part': 'bar' },
@@ -493,7 +499,6 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       element,
       card,
       track,
-      grid,
       bar,
       state,
       scheduledTrack,
@@ -697,7 +702,11 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     return rebaseTimelineViewport(this.#geometry, this.options.scroll.scrollLeft, usable);
   }
   #calendar(): void {
-    const usable = this.options.scroll.clientWidth - this.#summary.getBoundingClientRect().width;
+    const summaryWidth = this.#summary.getBoundingClientRect().width;
+    const previousWidth = this.#rowLayout.width;
+    this.#rowLayout.width = summaryWidth;
+    if (previousWidth >= 0 && previousWidth !== summaryWidth) this.#viewport.refreshMeasurements();
+    const usable = this.options.scroll.clientWidth - summaryWidth;
     const position = this.#position(usable);
     const changed = position.viewport !== this.#geometry;
     this.#geometry = position.viewport;
@@ -733,7 +742,7 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       todayDay: localDay(this.actions.now()),
       overscanCells: 1,
     });
-    patchTimelineGrid(this.#gridTemplate, this.#axisLayout);
+    patchTimelineGrid(this.#grid, this.#axisLayout);
     this.#patchCalendarHeading();
     this.#patchMountedCalendar(changed, todayChanged);
   }
@@ -760,7 +769,6 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
     const window = this.#window(),
       visibleStart = this.#visibleStart(this.#lastLeft);
     for (const mount of this.#mounts.values()) {
-      patchTimelineGrid(mount.grid, this.#axisLayout);
       if (changed || todayChanged) patchTimelineToday(mount.track, window, this.actions.now());
       if (changed) {
         const dates = taskTimelineDates(this.actions.planning(mount.row.task));
@@ -781,7 +789,6 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
   }
   #bind(): void {
     const doc = this.options.host.ownerDocument;
-    if (this.#gridTemplate.ownerDocument !== doc) doc.adoptNode(this.#gridTemplate);
     const owner = doc.defaultView;
     if (owner === this.#owner) return;
     this.#cancelFrame();

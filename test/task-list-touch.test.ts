@@ -337,3 +337,37 @@ it('applies only the unreported tail of a claimed swipe and prevents its compati
     h.dispose();
   }
 });
+
+it('commits the end of a swipe before another contact can interrupt the next paint', () => {
+  const h = surface();
+  try {
+    h.touch('touchstart', 750, 10);
+    h.touch('touchmove', 695, 25);
+    h.paint(35);
+    h.touch('touchmove', 259, 90);
+    h.touch('touchend', 259, 105);
+    h.row.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    h.touch('touchstart', 500, 115);
+    h.paint(125);
+    expect(h.positions).toEqual([55, 491]);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('applies a terminal coordinate correction without coasting against the swipe', () => {
+  const h = surface();
+  try {
+    h.touch('touchstart', 750, 10);
+    h.touch('touchmove', 450, 70);
+    h.touch('touchmove', 232, 115);
+    h.paint(120);
+    h.touch('touchend', 259, 130);
+    h.paint(146);
+    h.paint(162);
+    expect(h.positions).toEqual([518, 491]);
+    expect(h.frames.size).toBe(0);
+  } finally {
+    h.dispose();
+  }
+});

@@ -79,7 +79,14 @@ class TaskListTravel {
     this.#pending += delta;
     this.#schedule();
   }
-  coast(speed: number, time: number): void {
+  finish(speed: number, time: number): void {
+    // A new pointerdown can precede the queued paint. Commit the accepted
+    // finger distance before the next contact can stop this gesture.
+    if (this.#frame !== undefined) {
+      this.owner.cancelAnimationFrame(this.#frame);
+      this.#paint(time);
+    }
+    if (speed === 0 || !this.canPublish()) return;
     this.#speed = speed;
     this.#coastTime = time;
     this.#schedule();
@@ -203,13 +210,15 @@ export function bindTaskListTouch(
     };
     const end = (event: TouchEvent): void => {
       // Android may coalesce the entire swipe into the final changed contact.
+      const moveSpeed = speed;
       sample(event, singleContact(event, true));
-      const coast =
-        releaseTarget !== undefined &&
-        vertical &&
-        shouldCoast(speed, event.timeStamp - lastTime, owner);
+      const claimed = releaseTarget !== undefined && vertical;
       release();
-      if (coast) travel.coast(speed, event.timeStamp);
+      if (!claimed) return;
+      // A final coordinate can correct a predicted move in the opposite
+      // direction. Honor its position without starting a reverse fling.
+      const coast = moveSpeed * speed >= 0 && shouldCoast(speed, event.timeStamp - lastTime, owner);
+      travel.finish(coast ? speed : 0, event.timeStamp);
     };
     releaseTarget = watchContact(target, move, end, stop);
   };
