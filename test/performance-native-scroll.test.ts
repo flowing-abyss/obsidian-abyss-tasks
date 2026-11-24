@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  exposeScrollSurface,
   rapidScroll,
   readyRowLabel,
   reversalStep,
@@ -65,6 +66,31 @@ describe('native reversal identity', () => {
   afterEach(() => {
     document.body.replaceChildren();
     vi.useRealTimers();
+  });
+
+  it('exposes a center collection through its own open detail toggle, preserving inspector scrolls', () => {
+    const other = document.body.createDiv({ cls: 'abyss-panel-view' });
+    const panel = document.body.createDiv({ cls: 'abyss-panel-view' });
+    const toggle = (root: HTMLElement) =>
+      root.createEl('button', {
+        cls: 'abyss-compact-pane-button--right',
+        attr: { 'aria-expanded': 'true' },
+      });
+    const unrelated = toggle(other);
+    const button = toggle(panel);
+    const center = panel.createDiv({ cls: 'abyss-center' }).createDiv();
+    const picker = panel.createDiv({ cls: 'abyss-right' }).createDiv();
+    const clicked = vi.fn(() => {
+      button.setAttribute('aria-expanded', 'false');
+    });
+    button.addEventListener('click', clicked);
+    const unrelatedClick = vi.spyOn(unrelated, 'click');
+    exposeScrollSurface(picker);
+    expect(clicked).not.toHaveBeenCalled();
+    exposeScrollSurface(center);
+    exposeScrollSurface(center);
+    expect(clicked).toHaveBeenCalledTimes(1);
+    expect(unrelatedClick).not.toHaveBeenCalled();
   });
 
   it('refuses a fully visible column with no actual scrolling range', async () => {

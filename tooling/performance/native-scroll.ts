@@ -336,6 +336,14 @@ function currentHit(
   return undefined;
 }
 
+export function exposeScrollSurface(scroll: HTMLElement): void {
+  scroll
+    .closest('.abyss-center')
+    ?.closest('.abyss-panel-view')
+    ?.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right[aria-expanded="true"]')
+    ?.click();
+}
+
 export async function rapidScroll(
   view: ScrollView,
   measure: Measure,
@@ -351,6 +359,7 @@ export async function rapidScroll(
       node.getBoundingClientRect().right > 0,
   );
   if (scroll === undefined) throw new Error(`Populated scroll surface missing: ${view}`);
+  exposeScrollSurface(scroll);
   const step = reversalStep(view, scroll);
   scroll.scrollTop = step;
   await frames();
