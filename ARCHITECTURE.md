@@ -151,7 +151,9 @@ Opening a menu on one task must still target that task if the inspector selectio
 interactions. Logical rows own order and selection. Each view mounts full cards around the
 viewport. Timeline uses the same task cards and calendar tracks during scrolling and at rest.
 Screen-sized vertical wheel steps mount the destination window in the input handler. After the
-gesture pauses, small batches prepare neighboring cards. Android task summaries apply vertical
+gesture pauses, small batches prepare neighboring cards. Mobile task lists use the first settled
+cards to estimate the height of unseen tasks. They retain that estimate with the scroll position
+when the user returns to the view. Android lists and Timeline task summaries apply vertical
 swipes and their momentum on the same frame as the destination cards. Touching a row stops
 that motion before the tap is handled. Calendar tracks keep their range-edit gestures.
 Compact collections batch exact-source lookups and prioritize tasks in the viewport. The search service

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { bindTimelineTouch } from '../src/panels/virtualization/timelineTouch';
+import { bindTaskListTouch } from '../src/panels/virtualization/taskListTouch';
 
 function surface() {
   const scroll = document.body.createDiv();
@@ -16,7 +16,7 @@ function surface() {
   });
   const canPublish = vi.fn(() => true);
   const positions: number[] = [];
-  const dispose = bindTimelineTouch(scroll, canPublish, () => positions.push(scroll.scrollTop));
+  const dispose = bindTaskListTouch(scroll, canPublish, () => positions.push(scroll.scrollTop));
   function touch(
     type: string,
     y: number,

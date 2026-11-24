@@ -144,7 +144,11 @@ import {
   type TaskTimelineScrollPosition,
 } from './task-collection/TaskTimelineSurface';
 import { TaskListStatusPublication } from './task-list/TaskListStatusPublication';
-import type { TaskListScrollPosition, TaskListSurfaceOptions } from './task-list/TaskListSurface';
+import type {
+  TaskListScrollPosition,
+  TaskListSurfaceOptions,
+  TaskRowHeights,
+} from './task-list/TaskListSurface';
 import { TaskListSurface, type TaskRowMount } from './task-list/TaskListSurface';
 import { TaskSearchRows, type TaskSearchRowsIdentity } from './task-list/TaskSearchRows';
 import {
@@ -164,6 +168,8 @@ import {
   type TaskListRows,
 } from './task-list/taskListRows';
 import { TaskRowSelection } from './task-list/taskRowSelection';
+
+const initialRowHeights = { group: 32, task: 64 } as const;
 
 type SurfaceTask = TaskNodeSnapshot | TaskSearchOccurrence;
 interface TaskRowOptions {
@@ -1242,8 +1248,8 @@ export class CenterPanel {
           retained.tagGroups,
         ]),
         preserveAnchor: options.preserveAnchor,
-        indexedHeights: { group: 32, task: 64 },
-        estimate: (row) => (row.kind === 'group' ? 32 : 64),
+        indexedHeights: this.taskRowHeights_abyssPrivate(),
+        estimate: (row) => initialRowHeights[row.kind],
         measurementRevision: (row) =>
           row.kind === 'group'
             ? `${row.label}:${row.count}`
@@ -3186,6 +3192,15 @@ export class CenterPanel {
     this.onRenderComplete_abyssPrivate(this.el);
   }
 
+  private taskRowHeights_abyssPrivate(): TaskRowHeights {
+    if (
+      Platform.isMobile &&
+      this.isTaskCollection_abyssPrivate() &&
+      this.taskCollectionView_abyssPrivate() === 'list'
+    )
+      return { ...initialRowHeights, sampleOpeningTasks: true };
+    return initialRowHeights;
+  }
   private hasCompactTasks_abyssPrivate(): boolean {
     return (
       this.isTaskCollection_abyssPrivate() &&
@@ -3482,6 +3497,7 @@ export class CenterPanel {
     retained.tagGroups = tagGroups;
     retained.options = options;
     this.mountedRows_abyssPrivate = retained.surface;
+    const heights = this.taskRowHeights_abyssPrivate();
     retained.surface.update(
       displayRows,
       {
@@ -3491,7 +3507,8 @@ export class CenterPanel {
           tagGroups,
         ]),
         preserveAnchor: true,
-        estimate: (row) => (row.kind === 'group' ? 32 : 64),
+        ...(heights.sampleOpeningTasks === true && { indexedHeights: heights }),
+        estimate: (row) => initialRowHeights[row.kind],
         measurementRevision: (row) =>
           row.kind === 'task'
             ? this.taskRowRevision_abyssPrivate(row.task)

@@ -63,7 +63,7 @@ function shouldCoast(speed: number, sinceMove: number, owner: Window): boolean {
   );
 }
 
-class TimelineTravel {
+class TaskListTravel {
   #frame: number | undefined;
   #pending = 0;
   #speed = 0;
@@ -144,15 +144,15 @@ function watchContact(
   };
 }
 
-/** Keep single-finger vertical travel and the canonical Android Timeline rows on the same paint. */
-export function bindTimelineTouch(
+/** Keep single-finger vertical travel and the mounted Android task rows on the same paint. */
+export function bindTaskListTouch(
   scroll: HTMLElement,
   canPublish: () => boolean,
   moved: () => void,
 ): () => void {
   const owner = scroll.ownerDocument.defaultView;
   if (owner === null) return () => {};
-  const travel = new TimelineTravel(scroll, owner, canPublish, moved);
+  const travel = new TaskListTravel(scroll, owner, canPublish, moved);
   let releaseTarget: (() => void) | undefined;
   const release = (): void => {
     releaseTarget?.();

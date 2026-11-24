@@ -1,3 +1,4 @@
+import { Platform } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   TaskListSurface,
@@ -2115,6 +2116,132 @@ it('keeps the mounted list intact while a scroll stays inside its reserve', () =
   expect(h.mountedChanged).toHaveBeenCalled();
   expect(h.surface.element('n.md:25')?.isConnected).toBe(true);
   h.surface.destroy();
+});
+
+it('uses the opening task heights for unseen mobile rows and keeps that estimate during travel', () => {
+  const h = harness(false, true, false, { scrollReservePx: 400 });
+  h.style('paddingTop', '8px');
+  const mobile = {
+    ...presentation,
+    indexedHeights: { group: 32, task: 48, sampleOpeningTasks: true },
+  };
+  try {
+    for (let n = 0; n < 200; n++) h.heights.set(`n.md:${n}`, n % 2 === 0 ? 72 : 120);
+    h.surface.update(rows(200), mobile);
+    h.frame();
+    const openingExtent = h.scroll.scrollHeight;
+    // The cold destination should already account for the height of wrapped titles.
+    expect(openingExtent).toBeCloseTo(200 * 96, -3);
+    h.scrollTo(openingExtent * 0.78);
+    h.frame();
+    expect(Math.abs(h.scroll.scrollHeight - openingExtent)).toBeLessThan(200);
+    // A native scrollbar can appear after seeking. Only the destination rows are unusually tall.
+    for (const key of h.surface.mountedKeys()) h.heights.set(key, 220);
+    h.size(597, 480);
+    h.resize();
+    h.frame();
+    expect(h.scroll.scrollHeight).toBeLessThan(openingExtent + 6000);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('publishes the destination cards before an Android list swipe is painted', async () => {
+  vi.spyOn(Platform, 'isAndroidApp', 'get').mockReturnValue(true);
+  const h = harness(false, true, false, { scrollReservePx: 400 });
+  try {
+    h.surface.update(rows(1000), presentation);
+    const row = expectDefined(h.surface.element('n.md:1'));
+    const touch = (type: string, y: number) => {
+      const contact = { identifier: 1, clientX: 60, clientY: y } as Touch;
+      const event = new TouchEvent(type, { bubbles: true, cancelable: true, touches: [contact] });
+      row.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(touch('touchstart', 1600)).toBe(false);
+    expect(touch('touchmove', 100)).toBe(true);
+    h.frame();
+    await Promise.resolve();
+    expect(h.scroll.scrollTop).toBe(1500);
+    expect(h.surface.element('n.md:35')?.isConnected).toBe(true);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('restores a sampled list in the middle and recalibrates after its contents change', () => {
+  const mobile = {
+    ...presentation,
+    indexedHeights: { group: 32, task: 48, sampleOpeningTasks: true },
+  };
+  const data = rows(1000);
+  const h = harness(false, true, false, { scrollReservePx: 400 });
+  for (let n = 0; n < 1000; n++) h.heights.set(`n.md:${n}`, 96);
+  h.surface.update(data, mobile);
+  h.scrollTo(48000);
+  h.frame();
+  const position = h.surface.captureScroll();
+  h.surface.destroy();
+
+  const restored = harness(false, true, false, { scrollReservePx: 400 });
+  try {
+    for (const [key, height] of h.heights) restored.heights.set(key, height);
+    restored.surface.restoreScroll(position);
+    restored.surface.update(data, mobile);
+    restored.frame();
+    expect(restored.scroll.scrollHeight).toBe(96000);
+    expect(restored.scroll.scrollTop).toBe(48000);
+    const replacement = indexedRows(
+      Array.from({ length: 1000 }, (_, line) => ({
+        kind: 'task' as const,
+        key: String(line),
+        taskKey: String(line),
+        task: task({ title: String(line) }),
+      })),
+    );
+    restored.scrollTo(0);
+    restored.surface.update(replacement, mobile);
+    restored.frame();
+    expect(restored.scroll.scrollHeight).toBe(48000);
+  } finally {
+    restored.surface.destroy();
+  }
+});
+
+it('reuses settled list row heights during a fling until a resize or range change', () => {
+  const h = harness(false, false, false, { scrollReservePx: 400 });
+  try {
+    h.surface.update(rows(1000), presentation);
+    h.scrollTo(1200);
+    h.frame();
+    const keys = h.surface.mountedKeys();
+    const measure = vi.fn();
+    h.onMeasure(measure);
+    h.scrollTo(1224);
+    h.frame();
+    expect(h.surface.mountedKeys()).toEqual(keys);
+    expect(measure).not.toHaveBeenCalled();
+    // WebView sends a native echo after the touch frame published the scrollTop change.
+    h.scroll.dispatchEvent(new Event('scroll'));
+    h.frame();
+    expect(measure).not.toHaveBeenCalled();
+
+    h.heights.set('n.md:20', 72);
+    h.resize();
+    h.scrollTo(1248);
+    h.frame();
+    expect(h.scroll.scrollTop).toBe(1272);
+    expect(measure).toHaveBeenCalled();
+
+    measure.mockClear();
+    h.scrollTo(6000);
+    h.frame();
+    expect(h.surface.mountedKeys()).not.toEqual(keys);
+    expect(measure).toHaveBeenCalled();
+  } finally {
+    h.surface.destroy();
+  }
 });
 
 it('reuses settled Timeline geometry on a native scroll and measures coalesced resize or receipt work', async () => {

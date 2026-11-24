@@ -15,9 +15,10 @@ import {
   type RowWindow,
   type ScrollBuffer,
 } from '../virtualization/rowViewport';
-import { bindTimelineTouch } from '../virtualization/timelineTouch';
+import { bindTaskListTouch } from '../virtualization/taskListTouch';
 import { bindTimelineWheel } from '../virtualization/timelineWheel';
 import { onVerticalScrollIntent } from '../virtualization/verticalScrollIntent';
+import { retainHeightSample, sampleTaskHeights, type TaskHeightSample } from './taskHeightSample';
 import { indexedRows, type TaskListRow, type TaskListRows } from './taskListRows';
 import type { MountedTaskListRows } from './taskListRowView';
 
@@ -27,10 +28,15 @@ export interface TaskRowMount<T = TaskSnapshot> {
   update(row: TaskListRow<T>): void;
   destroy(): void;
 }
+export interface TaskRowHeights {
+  readonly group: number;
+  readonly task: number;
+  readonly sampleOpeningTasks?: boolean;
+}
 export interface TaskListPresentation<T = TaskSnapshot> {
   readonly revision: string;
   readonly preserveAnchor: boolean;
-  readonly indexedHeights?: { readonly group: number; readonly task: number };
+  readonly indexedHeights?: TaskRowHeights;
   estimate(row: TaskListRow<T>): number;
   measurementRevision(row: TaskListRow<T>): string;
 }
@@ -74,6 +80,7 @@ interface RevealPlacement {
 }
 
 export interface TaskListScrollPosition {
+  readonly taskHeightSample?: TaskHeightSample;
   readonly top: number;
   readonly anchor: RowAnchor | undefined;
 }
@@ -204,6 +211,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #reconciliation = 0;
   #invalidating = false;
   #layoutRevision = 0;
+  #taskHeightSample: TaskHeightSample | undefined;
   #width = -1;
   #font = '';
   #focusedKey: string | undefined;
@@ -237,10 +245,14 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return this.#rows;
   }
   captureScroll(): TaskListScrollPosition {
-    return this.#pendingScroll ?? this.#updateScroll(this.#failed, true);
+    const position = this.#pendingScroll ?? this.#updateScroll(this.#failed, true);
+    return this.#taskHeightSample === undefined
+      ? position
+      : { ...position, taskHeightSample: this.#taskHeightSample };
   }
   restoreScroll(position: TaskListScrollPosition): void {
     this.#endTimelineSeek();
+    this.#taskHeightSample = position.taskHeightSample;
     this.#pendingScroll = position;
   }
   element(key: string): HTMLElement | undefined {
@@ -303,6 +315,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       this.#endTimelineSeek();
       this.#ownedWrite = undefined;
       this.#rows = rows;
+      this.#taskHeightSample = retainHeightSample(this.#taskHeightSample, rows);
       this.#presentation = presentation;
       this.#pendingUpdate = true;
       // A surviving holder keeps its visible extent while its new exact source hydrates.
@@ -668,12 +681,16 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (presentation === undefined) return;
     const rows = this.#rows;
     const revision = `${this.#layoutRevision}:${presentation.revision}`;
+    const indexed = presentation.indexedHeights;
+    const heights =
+      indexed?.sampleOpeningTasks === true && this.#taskHeightSample !== undefined
+        ? { ...indexed, task: this.#taskHeightSample.height }
+        : indexed;
     const geometryRow = (row: TaskListRow<T>): RowViewportRow => ({
       key: row.key,
-      estimatedHeight: presentation.indexedHeights?.[row.kind] ?? presentation.estimate(row),
+      estimatedHeight: heights?.[row.kind] ?? presentation.estimate(row),
       measurementRevision: `${revision}:${presentation.measurementRevision(row)}`,
     });
-    const heights = presentation.indexedHeights;
     if (heights === undefined) {
       this.#viewport.replace(Array.from(rows.slice(0, rows.rowCount), geometryRow));
       return;
@@ -815,34 +832,42 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     owner.addEventListener('resize', schedule);
     const clearInputListeners = this.#bindInput(owner, generation);
     const clearWarmup = this.#bindWarmup(owner, generation);
-    const clearTimelineInput = this.#bindTimelineInput();
+    const clearScrollInput = this.#bindScrollInput();
     const fonts = owner.document.fonts;
     fonts.addEventListener('loadingdone', fontChanged);
     this.#nativeCleanup = () => {
       clearInputListeners();
       clearWarmup?.();
-      clearTimelineInput?.();
+      clearScrollInput?.();
       owner.removeEventListener('resize', schedule);
       fonts.removeEventListener('loadingdone', fontChanged);
     };
     return true;
   }
-  #bindTimelineInput(): (() => void) | undefined {
-    if (this.#activeBuffer !== 'timeline') return;
+  #bindScrollInput(): (() => void) | undefined {
+    const timeline = this.#activeBuffer === 'timeline';
+    const androidList =
+      Platform.isAndroidApp && this.#activeBuffer === 'scroll' && this.#bufferedList;
+    if (!timeline && !androidList) return;
     const scroll = this.#options.scroll;
     const canPublish = (): boolean =>
       !this.#pendingUpdate && !this.#failed && this.#active() && this.#canBufferRange();
     const moved = (): void => {
-      this.#guard(() => {
-        this.#publishTimelineStep();
-      });
+      if (timeline)
+        this.#guard(() => {
+          this.#publishTimelineStep();
+        });
+      else {
+        this.#scrolled();
+        this.#flushBeforePaint();
+      }
     };
-    const clearWheel = bindTimelineWheel(scroll, canPublish, moved);
+    const clearWheel = timeline ? bindTimelineWheel(scroll, canPublish, moved) : undefined;
     const clearTouch = Platform.isAndroidApp
-      ? bindTimelineTouch(scroll, canPublish, moved)
+      ? bindTaskListTouch(scroll, canPublish, moved)
       : undefined;
     return () => {
-      clearWheel();
+      clearWheel?.();
       clearTouch?.();
     };
   }
@@ -953,7 +978,8 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const timelineScroll =
       this.#activeBuffer === 'timeline' &&
       (distance !== 0 || this.#scrollBuffer === 'timeline-seek');
-    this.#queueFrame(timelineScroll ? 'scroll' : 'measure');
+    const listScroll = this.#activeBuffer === 'scroll';
+    this.#queueFrame(timelineScroll || listScroll ? 'scroll' : 'measure');
     if (timelineScroll && Math.abs(distance) >= this.#height() / 2) this.#flushBeforePaint();
   }
   #bufferScrollStep(top: number, previous: { top: number } | undefined): void {
@@ -1328,14 +1354,52 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const retainedAnchor = anchor ?? this.#measurementAnchor(top);
     const measurements = this.#measureRows(current);
     if (measurements === undefined || !this.#admitReconciliation(current)) return;
-    const measured = this.#viewport.measure(measurements, Math.max(0, top), retainedAnchor);
+    const originalTop = Math.max(0, top);
+    const measured = this.#measureGeometry(measurements, originalTop, retainedAnchor);
     let released = false;
     for (const { key, height } of measurements)
       if (Number.isFinite(height) && height > 0 && this.#pendingFrames.delete(key)) released = true;
     // Equal cached heights still need a render to restore natural frame flow.
     if (!measured.changed && !released) return;
     this.#renderedRange = undefined;
-    return top + measured.scrollTop - Math.max(0, top);
+    return top + measured.scrollTop - originalTop;
+  }
+  #measureGeometry(
+    measurements: RowMeasurement[],
+    top: number,
+    anchor: RowAnchor | undefined,
+  ): { scrollTop: number; changed: boolean } {
+    const calibratedTop = this.#calibrateTaskHeight(measurements, top, anchor);
+    const measured = this.#viewport.measure(measurements, calibratedTop ?? top, anchor);
+    return {
+      scrollTop: measured.scrollTop,
+      changed: measured.changed || calibratedTop !== undefined,
+    };
+  }
+  #calibrateTaskHeight(
+    measurements: readonly RowMeasurement[],
+    top: number,
+    retainedAnchor: RowAnchor | undefined,
+  ): number | undefined {
+    const indexed = this.#presentation?.indexedHeights;
+    if (
+      indexed?.sampleOpeningTasks !== true ||
+      measurements.length !== this.#mounts.size ||
+      this.#pins.size > 0
+    )
+      return;
+    const previous = this.#taskHeightSample;
+    const sample = sampleTaskHeights(this.#rows, measurements, previous, {
+      width: this.#width,
+      font: this.#font,
+      top,
+    });
+    if (sample === undefined) return;
+    this.#taskHeightSample = sample;
+    if (previous?.height === sample.height) return;
+    const anchor = retainedAnchor ?? this.#viewport.captureAnchor(top);
+    this.#replace();
+    return this.#viewport.restoreAnchor(anchor, top);
   }
   #measureRows(current: () => boolean): RowMeasurement[] | undefined {
     if (!this.#admitReconciliation(current)) return;
