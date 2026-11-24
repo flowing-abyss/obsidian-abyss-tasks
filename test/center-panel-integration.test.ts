@@ -435,6 +435,47 @@ describe('CenterPanel task-card primary row', () => {
 });
 
 describe('CenterPanel list selection', () => {
+  it('restores the last 32 collection positions and refreshes a revisited tag', () => {
+    const state = new AppState();
+    const selectTag = (tag: string): void => {
+      state.set('selectedList', { type: 'tag', tag });
+    };
+    selectTag('#recent');
+    const panel = makeStaticPanel(
+      state,
+      Array.from({ length: 20 }, (_, line) =>
+        task({
+          title: `Task ${line}`,
+          tags: ['#recent', '#older'],
+          source: { filePath: 'tags.md', line },
+        }),
+      ),
+    );
+    const container = freshContainer();
+    const scroll = (): HTMLElement =>
+      expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+
+    try {
+      panel.mount(container);
+      scroll().scrollTop = 80;
+      selectTag('#older');
+      scroll().scrollTop = 100;
+      for (let index = 0; index < 30; index++) selectTag(`#other-${index}`);
+
+      selectTag('#recent');
+      expect(scroll().scrollTop).toBe(80);
+      scroll().scrollTop = 90;
+      selectTag('#new');
+      selectTag('#older');
+      expect(scroll().scrollTop).toBe(0);
+      selectTag('#recent');
+      expect(scroll().scrollTop).toBe(90);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('lets the recursive list selector apply the exact tag boundary across roots and subtasks', () => {
     const state = new AppState();
     state.set('selectedList', { type: 'tag', tag: '#work' });

@@ -14,6 +14,7 @@ import { LogicalScrollWindow } from '../src/panels/virtualization/logicalScrollW
 import { RowViewport } from '../src/panels/virtualization/rowViewport';
 import {
   cssDeclarationsFor,
+  deferred,
   expectDefined,
   freshContainer,
   loadPluginStyles,
@@ -1767,6 +1768,58 @@ it('invalidates offscreen font measurements through the actual font completion e
   expect(h.scroll.scrollTop).toBe(4320);
 });
 
+it.each(['open', 'closed'] as const)(
+  'recalibrates unseen rows and preserves their anchor when fonts load while the list is %s',
+  (state) => {
+    let h = harness(false, true, false, { scrollReservePx: 'timeline' });
+    const fonts = document.fonts;
+    let ready = Promise.resolve(fonts);
+    const readReady = vi.fn(() => ready);
+    Object.assign(fonts, { status: 'loaded' });
+    Object.defineProperty(fonts, 'ready', { get: readReady, configurable: true });
+    const data = rows(300);
+    const sampled = {
+      ...presentation,
+      indexedHeights: { group: 32, task: 48, sampleOpeningTasks: true },
+    };
+    try {
+      h.surface.update(data, sampled);
+      readReady.mockClear();
+      h.scrollTo(4800.25);
+      h.frame();
+      expect(readReady).not.toHaveBeenCalled();
+      const saved = h.surface.captureScroll();
+      expect(saved.anchor).toMatchObject({ key: 'n.md:100', offset: 0.25 });
+      if (state === 'closed') h.surface.destroy();
+
+      // A new webfont changes wrapping without changing the computed CSS font family.
+      const loading = deferred<FontFaceSet>();
+      ready = loading.promise;
+      Object.assign(fonts, { status: 'loading' });
+      if (state === 'open') {
+        h.resize();
+        h.frame();
+      }
+      loading.resolve(fonts);
+      Object.assign(fonts, { status: 'loaded' });
+      fonts.dispatchEvent(new Event('loadingdone'));
+      if (state === 'closed') {
+        h = harness(false, true, false, { scrollReservePx: 'timeline' });
+        Object.defineProperty(document, 'fonts', { value: fonts, configurable: true });
+        h.surface.restoreScroll(saved);
+      }
+      for (let i = 0; i < 300; i++) h.heights.set(`n.md:${i}`, 64);
+      if (state === 'closed') h.surface.update(data, sampled);
+      h.frame();
+      expect(h.scroll.scrollHeight).toBe(19200);
+      expect(h.scroll.scrollTop).toBe(6400.25);
+      expect(h.surface.captureScroll().anchor).toMatchObject({ key: 'n.md:100', offset: 0.25 });
+    } finally {
+      h.surface.destroy();
+    }
+  },
+);
+
 it('rebinds adopted task rows and cancels old native work before disposing new-owner callbacks', () => {
   const h = harness();
   h.surface.update(rows(100), presentation);
@@ -2221,6 +2274,9 @@ it('restores a sampled list in the middle and recalibrates after its contents ch
   h.scrollTo(48000);
   h.frame();
   const position = h.surface.captureScroll();
+  expect(position.anchor?.key).toBeDefined();
+  expect(position.anchor).not.toHaveProperty('previousOrder');
+  expect(JSON.parse(JSON.stringify(position))).toEqual(position);
   h.surface.destroy();
 
   const restored = harness(false, true, false, { scrollReservePx: 400 });

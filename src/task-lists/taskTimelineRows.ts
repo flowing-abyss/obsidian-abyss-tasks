@@ -51,7 +51,7 @@ export function buildTaskTimelineRows<T>(
         return dates === 0 ? sourceOrder(a.value, b.value) : direction * dates;
       });
     }
-    result.push(...tasks.map(({ row }) => row));
+    for (const { row } of tasks) result.push(row);
     tasks = [];
   };
   for (const row of rows.slice(0, rows.rowCount)) {

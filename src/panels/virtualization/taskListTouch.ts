@@ -81,15 +81,13 @@ class TaskListTravel {
   }
   finish(speed: number, time: number): void {
     // A new pointerdown can precede the queued paint. Commit the accepted
-    // finger distance before the next contact can stop this gesture.
+    // finger distance now. Its publication can also cancel the remaining coast.
+    this.#speed = speed;
+    this.#coastTime = speed === 0 ? undefined : time;
     if (this.#frame !== undefined) {
       this.owner.cancelAnimationFrame(this.#frame);
       this.#paint(time);
-    }
-    if (speed === 0 || !this.canPublish()) return;
-    this.#speed = speed;
-    this.#coastTime = time;
-    this.#schedule();
+    } else if (speed !== 0 && this.canPublish()) this.#schedule();
   }
   stop(): void {
     if (this.#frame !== undefined) this.owner.cancelAnimationFrame(this.#frame);

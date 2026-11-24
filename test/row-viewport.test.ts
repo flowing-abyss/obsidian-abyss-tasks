@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { RowViewport, type RowViewportRow } from '../src/panels/virtualization/rowViewport';
+import {
+  bookmarkRowAnchor,
+  RowViewport,
+  type RowViewportRow,
+} from '../src/panels/virtualization/rowViewport';
 import { numericRowSource } from './support/virtualSurfaceAudit';
 
 function rows(keys: readonly string[], height = 40, revision = '1'): RowViewportRow[] {
@@ -80,6 +84,22 @@ describe('shared row viewport geometry', () => {
     expect(second?.previousOrder.anchorRanges()).toEqual(
       ['a', 'b', 'c'].map((key) => ({ kind: 'key', key })),
     );
+  });
+
+  it('reopens at the saved row, its neighbors, or the saved pixel position after removals', () => {
+    const viewport = new RowViewport();
+    viewport.replace(rows(['a', 'b', 'c', 'd', 'e']));
+    const saved = bookmarkRowAnchor(viewport.captureAnchor(85));
+    expect(saved).toEqual({ key: 'c', offset: 5, neighbors: ['d', 'b'] });
+    for (const [order, top] of [
+      [['c', 'd', 'b'], 5],
+      [['b', 'a', 'd'], 85],
+      [['a', 'b'], 45],
+      [['x', 'y', 'z'], 73],
+    ] as const) {
+      viewport.replace(rows(order));
+      expect(viewport.restoreAnchor(saved, 73)).toBe(top);
+    }
   });
 
   it('looks up half-open bounds and excludes offsets outside the sequence', () => {

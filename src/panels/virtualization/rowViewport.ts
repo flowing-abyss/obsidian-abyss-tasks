@@ -39,11 +39,33 @@ export interface RowBounds {
   readonly bottom: number;
 }
 
-export interface RowAnchor {
+interface RowLocation {
   readonly key: string;
   readonly offset: number;
+}
+
+interface LiveRowAnchor extends RowLocation {
   readonly previousIndex: number;
   readonly previousOrder: RowViewportSource;
+}
+
+export interface RowBookmark extends RowLocation {
+  readonly neighbors: readonly string[];
+}
+
+export type RowAnchor = LiveRowAnchor | RowBookmark;
+
+/** A closed view keeps row identities without retaining its renderer or task collection. */
+export function bookmarkRowAnchor(anchor: RowAnchor | undefined): RowBookmark | undefined {
+  if (anchor === undefined || 'neighbors' in anchor) return anchor;
+  const { key, offset, previousOrder, previousIndex } = anchor;
+  const neighbors: string[] = [];
+  for (const index of [previousIndex + 1, previousIndex - 1]) {
+    if (index < 0 || index >= previousOrder.length) continue;
+    const neighbor = previousOrder.rowAt(index);
+    if (neighbor !== undefined) neighbors.push(neighbor.key);
+  }
+  return { key, offset, neighbors };
 }
 
 export type RowSegment = { readonly index: number } | { readonly height: number };
@@ -157,7 +179,7 @@ export class RowViewport {
     return { key: row.key, index, top, bottom: this.#geometry.offset(index + 1) };
   }
 
-  captureAnchor(top: number): RowAnchor | undefined {
+  captureAnchor(top: number): LiveRowAnchor | undefined {
     const row = this.rowAt(top);
     if (row === undefined) return undefined;
     return {
@@ -172,11 +194,18 @@ export class RowViewport {
     if (anchor === undefined) return fallbackTop;
     const surviving = this.rowBounds(anchor.key);
     if (surviving !== undefined) return surviving.top + anchor.offset;
+    if ('neighbors' in anchor) {
+      for (const key of anchor.neighbors) {
+        const neighbor = this.rowBounds(key);
+        if (neighbor !== undefined) return neighbor.top + anchor.offset;
+      }
+      return fallbackTop;
+    }
     const neighbor = this.#survivingNeighbor(anchor, 1) ?? this.#survivingNeighbor(anchor, -1);
     return neighbor === undefined ? 0 : neighbor.top + anchor.offset;
   }
 
-  #survivingNeighbor(anchor: RowAnchor, step: 1 | -1): RowBounds | undefined {
+  #survivingNeighbor(anchor: LiveRowAnchor, step: 1 | -1): RowBounds | undefined {
     const key = anchor.previousOrder.survivingNeighbor(
       anchor.previousIndex,
       step,

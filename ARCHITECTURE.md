@@ -155,7 +155,10 @@ gesture pauses, small batches prepare neighboring cards. Overlapping Timeline wi
 recently visited cards within the row budget so a reversal can reuse them. The task and project
 timelines paint the grid from the same date boundaries as the header.
 Mobile task lists and task timelines estimate unseen row heights from settled cards and retain
-the estimate with the scroll position. Timeline measures wrapping at the width of the task
+the estimate with the scroll position. The center panel remembers the 32 most recently closed
+task collection views. A saved position contains the row key, intra-row offset, adjacent keys
+and scroll coordinate. Live updates can still use the full previous row order to find a survivor.
+Timeline measures wrapping at the width of the task
 summary and recalibrates when that width or the card layout changes. On Android the task list
 and Timeline publish the destination cards with each vertical swipe and commit the final finger
 position on release. A new touch stops the remaining momentum. Calendar tracks keep their

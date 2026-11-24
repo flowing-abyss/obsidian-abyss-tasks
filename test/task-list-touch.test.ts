@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { bindTaskListTouch } from '../src/panels/virtualization/taskListTouch';
 
-function surface() {
+function surface(afterMove?: () => void) {
   const scroll = document.body.createDiv();
   Object.defineProperties(scroll, { clientHeight: { value: 400 }, scrollHeight: { value: 2400 } });
   const row = scroll.createDiv({ cls: 'abyss-task-card', attr: { draggable: 'true' } });
@@ -16,7 +16,10 @@ function surface() {
   });
   const canPublish = vi.fn(() => true);
   const positions: number[] = [];
-  const dispose = bindTaskListTouch(scroll, canPublish, () => positions.push(scroll.scrollTop));
+  const dispose = bindTaskListTouch(scroll, canPublish, () => {
+    positions.push(scroll.scrollTop);
+    afterMove?.();
+  });
   function touch(
     type: string,
     y: number,
@@ -354,6 +357,28 @@ it('commits the end of a swipe before another contact can interrupt the next pai
     h.dispose();
   }
 });
+
+it.each(['blur', 'dispose'])(
+  'keeps momentum stopped after %s during touchend publication',
+  (stop) => {
+    const afterMove = vi.fn<() => void>();
+    const h = surface(afterMove);
+    try {
+      afterMove.mockImplementationOnce(() => {
+        if (stop === 'dispose') h.dispose();
+        else window.dispatchEvent(new Event('blur'));
+      });
+      h.touch('touchstart', 750, 10);
+      h.touch('touchmove', 450, 70);
+      h.touch('touchend', 440, 75);
+      expect(h.frames.size).toBe(0);
+      h.paint(91);
+      expect(h.positions).toEqual([310]);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 
 it('applies a terminal coordinate correction without coasting against the swipe', () => {
   const h = surface();

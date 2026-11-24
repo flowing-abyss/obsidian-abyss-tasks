@@ -12,7 +12,8 @@ export interface ProjectTimelineRowsOptions {
   readonly host: HTMLElement;
   readonly scroll: HTMLElement;
   mount(host: HTMLElement, row: TimelineViewportRow, markdown: Component): TimelineRowMount;
-  beforeWindow(): void;
+  /** Return work that needs the final mounted rows, even when the existing window is reused. */
+  beforeWindow(): void | (() => void);
   mountedChanged(): void;
   reportFailure(error: unknown): void;
 }
@@ -383,25 +384,26 @@ export class ProjectTimelineRows {
     if (this.#frame !== undefined) this.#window?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
     try {
-      this.#options.beforeWindow();
+      const afterWindow = this.#options.beforeWindow();
       if (!this.#options.host.isConnected) {
         this.setActive(false);
         return;
       }
       this.#bind();
-      if (this.#height() <= 0) {
-        this.#render(0);
-        return;
-      }
-      const nativeTop = this.#options.scroll.scrollTop;
-      const { top, anchor } = this.#refreshMetrics(nativeTop);
-      if (this.#canReuseScrollWindow(top, anchor, measure)) return;
-      const { scrollTop: corrected } = this.#measure(top, anchor);
-      this.#render(corrected);
-      if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;
+      if (this.#height() <= 0) this.#render(0);
+      else this.#flushVisibleRows(measure);
+      afterWindow?.();
     } catch (error) {
       this.#report(error);
     }
+  }
+  #flushVisibleRows(measure: boolean): void {
+    const nativeTop = this.#options.scroll.scrollTop;
+    const { top, anchor } = this.#refreshMetrics(nativeTop);
+    if (this.#canReuseScrollWindow(top, anchor, measure)) return;
+    const { scrollTop: corrected } = this.#measure(top, anchor);
+    this.#render(corrected);
+    if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;
   }
   #canReuseScrollWindow(top: number, anchor: RowAnchor | undefined, measure: boolean): boolean {
     return (

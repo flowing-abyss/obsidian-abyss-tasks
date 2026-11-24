@@ -170,6 +170,7 @@ import {
 import { TaskRowSelection } from './task-list/taskRowSelection';
 
 const initialRowHeights = { group: 32, task: 64 } as const;
+const MAX_SAVED_TASK_VIEWPORTS = 32;
 
 type SurfaceTask = TaskNodeSnapshot | TaskSearchOccurrence;
 interface TaskRowOptions {
@@ -3861,23 +3862,23 @@ export class CenterPanel {
     this.mountedRows_abyssPrivate = NO_MOUNTED_TASK_LIST_ROWS;
   }
   private saveTaskViewport_abyssPrivate(retained: TaskSurfaceState | null): void {
-    if (retained?.viewKey !== undefined) {
-      const surface = retained.surface;
-      if (surface instanceof TaskKanbanSurface)
-        this.taskScroll_abyssPrivate.set(retained.viewKey, {
-          type: 'kanban',
-          value: surface.captureScroll(),
-        });
-      else if (surface instanceof TaskTimelineSurface)
-        this.taskScroll_abyssPrivate.set(retained.viewKey, {
-          type: 'timeline',
-          value: surface.captureScroll(),
-        });
-      else if (surface instanceof TaskListSurface)
-        this.taskScroll_abyssPrivate.set(retained.viewKey, {
-          type: 'list',
-          value: surface.captureScroll(),
-        });
+    if (retained?.viewKey === undefined) return;
+    const { viewKey, surface } = retained;
+    let position: TaskCollectionScroll;
+    if (surface instanceof TaskKanbanSurface)
+      position = { type: 'kanban', value: surface.captureScroll() };
+    else if (surface instanceof TaskTimelineSurface)
+      position = { type: 'timeline', value: surface.captureScroll() };
+    else if (surface instanceof TaskListSurface)
+      position = { type: 'list', value: surface.captureScroll() };
+    else return;
+
+    const history = this.taskScroll_abyssPrivate;
+    history.delete(viewKey);
+    history.set(viewKey, position);
+    if (history.size > MAX_SAVED_TASK_VIEWPORTS) {
+      const oldest = history.keys().next();
+      if (oldest.done !== true) history.delete(oldest.value);
     }
   }
 

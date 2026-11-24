@@ -1376,6 +1376,53 @@ it('threads each row and header Markdown owner through real renderer callbacks a
   expect(first.element.isConnected).toBe(false);
 });
 
+it.each([
+  { top: 0.5, leftStep: 0, keepsRows: true },
+  { top: 5000, leftStep: 0, keepsRows: false },
+  { top: 0, leftStep: 80, keepsRows: true },
+  { top: 5000, leftStep: 80, keepsRows: false },
+])(
+  'repositions a stationary hover once after scrolling to $top with horizontal step $leftStep',
+  ({ top, leftStep, keepsRows }) => {
+    const frames = controlledFrames();
+    const { host, view } = mount(
+      Array.from({ length: 100 }, (_, i) => project(`Projects/${i}.md`)),
+    );
+    frames.run();
+    const tracks = () => [...host.querySelectorAll<HTMLElement>('.abyss-project-timeline-track')];
+    const initial = tracks();
+    const first = expectDefined(initial[0]);
+    vi.spyOn(first, 'getBoundingClientRect').mockReturnValue(geometry(0, 400));
+    const index = top === 0 ? 0 : 1;
+    const hit = vi.fn(() => {
+      const track = expectDefined(tracks()[index]);
+      vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(geometry(-leftStep, 400));
+      return track;
+    });
+    Object.defineProperty(host.ownerDocument, 'elementFromPoint', {
+      configurable: true,
+      value: hit,
+    });
+    try {
+      first.dispatchEvent(
+        new MouseEvent('pointermove', { bubbles: true, clientX: 200, clientY: 100 }),
+      );
+      const cursor = expectDefined(first.querySelector('.abyss-project-timeline-cursor'));
+      view.scroll.scrollTop = top;
+      view.scroll.scrollLeft += leftStep;
+      view.scroll.dispatchEvent(new Event('scroll'));
+      frames.run();
+      expect(hit).toHaveBeenCalledExactlyOnceWith(200, 100);
+      const current = tracks();
+      if (keepsRows) expect(current).toEqual(initial);
+      else expect(first.isConnected).toBe(false);
+      expect(cursor.parentElement).toBe(current[index]);
+    } finally {
+      Reflect.deleteProperty(host.ownerDocument, 'elementFromPoint');
+    }
+  },
+);
+
 it('coalesces horizontal grids and vertical windows and gives fresh rows the current axis', () => {
   const frames = controlledFrames();
   const { host, view } = mount(

@@ -377,6 +377,12 @@ export class ProjectsTimelineView<
   }
 
   private createRowMounts_abyssPrivate(): ProjectTimelineRows {
+    const reconcileInteraction = (): void => {
+      this.interaction_abyssPrivate.reconcileAfterRender();
+    };
+    const reprojectHover = (): void => {
+      this.interaction_abyssPrivate.reprojectHover();
+    };
     return new ProjectTimelineRows({
       host: this.groupsHost_abyssPrivate,
       scroll: this.scroll,
@@ -386,8 +392,9 @@ export class ProjectsTimelineView<
           this.interaction_abyssPrivate.cancelActive();
           return;
         }
-        this.refreshCalendar_abyssPrivate();
+        const calendarChanged = this.refreshCalendar_abyssPrivate();
         this.refreshLayout_abyssPrivate();
+        return calendarChanged ? reconcileInteraction : reprojectHover;
       },
       mountedChanged: () => {
         this.visibleCells_abyssPrivate = [...this.rows_abyssPrivate.values()]
@@ -643,7 +650,7 @@ export class ProjectsTimelineView<
     }
     return rebaseTimelineViewport(this.viewport_abyssPrivate, this.scroll.scrollLeft, usable);
   }
-  private refreshCalendar_abyssPrivate(): void {
+  private refreshCalendar_abyssPrivate(): boolean {
     const usable =
       this.scroll.clientWidth - this.axisSummary_abyssPrivate.getBoundingClientRect().width;
     const position = this.viewportPosition_abyssPrivate(usable);
@@ -659,7 +666,7 @@ export class ProjectsTimelineView<
     const dayChanged = today !== this.calendarDay_abyssPrivate;
     this.calendarDay_abyssPrivate = today;
     const signature = `${window.startDay}:${window.scale}:${this.lastLeft_abyssPrivate}:${usable}:${today}`;
-    if (signature === this.calendarSignature_abyssPrivate) return;
+    if (signature === this.calendarSignature_abyssPrivate) return false;
     this.calendarSignature_abyssPrivate = signature;
     this.syncRangeStateOffset_abyssPrivate(this.lastLeft_abyssPrivate);
     this.patchVisibleCalendar_abyssPrivate(window, dayChanged);
@@ -669,7 +676,7 @@ export class ProjectsTimelineView<
         this.renderMissingRange_abyssPrivate(row, row.range, window);
       else row.state.hidden = true;
     }
-    this.interaction_abyssPrivate.reconcileAfterRender();
+    return true;
   }
 
   private readonly scrollChanged_abyssPrivate = (): void => {

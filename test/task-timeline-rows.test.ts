@@ -4,6 +4,22 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { buildTaskTimelineRows } from '../src/task-lists/taskTimelineRows';
 import { defaultTaskTimelineSettings } from '../src/task-lists/taskTimelineSettings';
 import { localDate, localTime, type TaskPlanning } from '../src/tasks';
+
+it('retains every task when a Timeline group exceeds the JavaScript argument limit', () => {
+  const count = 150_000;
+  const task = { statusSymbol: ' ', planning: {} };
+  const rows = indexedRows(
+    Array.from({ length: count }, (_, index) => {
+      const key = String(index);
+      return { kind: 'task' as const, key, taskKey: key, task };
+    }),
+  );
+  const result = buildTaskTimelineRows(rows, defaultTaskTimelineSettings(), [], (value) => value);
+  expect(result.taskCount).toBe(count);
+  expect(result.rowAt(0)).toBe(rows.rowAt(0));
+  expect(result.rowAt(count - 1)).toBe(rows.rowAt(count - 1));
+});
+
 it('filters status and truly undated tasks while retaining exact grouped row identities', () => {
   const tasks = [
     { statusSymbol: ' ', planning: { due: localDate('2026-10-26') } },

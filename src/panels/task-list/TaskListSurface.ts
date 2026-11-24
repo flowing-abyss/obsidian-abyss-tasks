@@ -5,9 +5,11 @@ import {
   type LogicalScrollPlacement,
 } from '../virtualization/logicalScrollWindow';
 import {
+  bookmarkRowAnchor,
   RowViewport,
   type InteractiveBuffer,
   type RowAnchor,
+  type RowBookmark,
   type RowBounds,
   type RowMeasurement,
   type RowSegment,
@@ -88,9 +90,11 @@ interface RevealPlacement {
 export interface TaskListScrollPosition {
   readonly taskHeightSample?: TaskHeightSample;
   readonly top: number;
-  readonly anchor: RowAnchor | undefined;
+  readonly anchor: RowBookmark | undefined;
 }
-interface TaskListScroll extends TaskListScrollPosition {
+interface TaskListScroll {
+  readonly top: number;
+  readonly anchor: RowAnchor | undefined;
   readonly clampToExtent?: boolean;
   readonly revealKey?: string;
   readonly onPending?: () => void;
@@ -252,10 +256,12 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return this.#rows;
   }
   captureScroll(): TaskListScrollPosition {
-    const position = this.#pendingScroll ?? this.#updateScroll(this.#failed, true);
-    return this.#taskHeightSample === undefined
-      ? position
-      : { ...position, taskHeightSample: this.#taskHeightSample };
+    const { top, anchor } = this.#updateScroll(this.#failed, true);
+    return {
+      top,
+      anchor: bookmarkRowAnchor(anchor),
+      ...(this.#taskHeightSample !== undefined && { taskHeightSample: this.#taskHeightSample }),
+    };
   }
   restoreScroll(position: TaskListScrollPosition): void {
     this.#endTimelineSeek();
@@ -1177,7 +1183,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const result = this.#renderWindow(
       work === 'update',
       nativeTop,
-      revealKey ?? this.#anchorKey(target?.anchor),
+      revealKey ?? this.#anchorKey(target?.anchor, nativeTop),
       current,
     );
     if (!this.#admitReconciliation(current)) return false;
@@ -1186,10 +1192,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       this.#measureWindow(nativeTop, target, current, { alignTall, retainedAnchor })
     );
   }
-  #anchorKey(anchor: RowAnchor | undefined): string | undefined {
+  #anchorKey(anchor: RowAnchor | undefined, fallbackTop: number): string | undefined {
     // A tall row's old offset can place its replacement estimate outside overscan.
     if (anchor === undefined) return;
-    return this.#viewport.rowAt(this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0))?.key;
+    return this.#viewport.rowAt(this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, fallbackTop))
+      ?.key;
   }
   #canReuseHeights(
     work: FrameWork | 'update',
@@ -1405,6 +1412,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const sample = sampleTaskHeights(this.#rows, measurements, previous, {
       width: this.#width,
       font: this.#font,
+      fonts: this.#options.host.ownerDocument.fonts,
       variant: this.#rowVariant,
       top,
     });

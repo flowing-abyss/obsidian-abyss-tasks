@@ -314,7 +314,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   }
 
   reconcileAfterRender(): void {
-    this.reprojectHover_abyssPrivate();
+    this.reprojectHover();
     this.reconcileActive_abyssPrivate();
     for (const [occurrenceId, pending] of this.pending_abyssPrivate) {
       const current = this.context_abyssPrivate.captureRangeSource(occurrenceId);
@@ -351,7 +351,7 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     }
   }
 
-  private reprojectHover_abyssPrivate(): void {
+  reprojectHover(): void {
     const hover = this.hoverPosition_abyssPrivate;
     if (this.active_abyssPrivate !== undefined || hover === undefined) return;
     const { root } = this.context_abyssPrivate;
