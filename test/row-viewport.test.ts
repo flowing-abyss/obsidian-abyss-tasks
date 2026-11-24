@@ -355,6 +355,8 @@ describe('shared row viewport geometry', () => {
     );
     const origin = viewport.window(0, 933, [], 'history');
     for (let top = 550; top <= 5500; top += 550) viewport.window(top, 933, [], 'history');
+    const seek = viewport.window(0, 933, [], 'interactive');
+    expect(seek.end).toBeGreaterThan(origin.end + 100);
     const back = viewport.window(0, 933, [], 'history');
     expect(back.end).toBeGreaterThan(origin.end + 100);
     for (let top = 0; top < 30000; top += 550) {

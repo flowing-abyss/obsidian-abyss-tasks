@@ -985,36 +985,46 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       const next = { top: scroll.scrollTop, left: scroll.scrollLeft };
       const previous = this.#lastScroll ?? next;
       this.#lastScroll = next;
-      this.#bufferScrollStep(next.top, previous);
+      const listSeek = this.#bufferScrollStep(next.top, previous);
       // Horizontal Timeline motion cannot change the vertical range. Other pending work,
       // including resize and hydration receipts, keeps its independently scheduled frame.
       if (sameOwner && previous.top === next.top && previous.left !== next.left) return;
       // Read each vertical event before the frame so away-and-back input retains its intent.
       this.#top();
       if (previous.top !== next.top && this.#active()) this.#pendingScroll = undefined;
-      this.#scheduleScrollStep(next.top - previous.top);
+      this.#scheduleScrollStep(next.top - previous.top, listSeek);
     });
   };
-  #scheduleScrollStep(distance: number): void {
+  #scheduleScrollStep(distance: number, listSeek: boolean): void {
     // Reuse the coalesced pre-paint measurement pass when a fling can outrun the frame callback.
     // A programmatic Timeline step has already recorded the position its scroll event reports.
     const timelineScroll =
       this.#activeBuffer === 'timeline' &&
       (distance !== 0 || this.#scrollBuffer === 'timeline-seek');
     this.#queueFrame(this.#activeBuffer !== 'timeline' || timelineScroll ? 'scroll' : 'measure');
-    if (timelineScroll && isLargeScrollStep(distance, this.#height())) this.#flushBeforePaint();
+    if (listSeek || (timelineScroll && isLargeScrollStep(distance, this.#height())))
+      this.#flushBeforePaint();
   }
-  #bufferScrollStep(top: number, previous: { top: number } | undefined): void {
+  #bufferScrollStep(top: number, previous: { top: number } | undefined): boolean {
     const distance = Math.abs(top - (previous?.top ?? top));
+    if (distance === 0) return false;
     if (this.#activeBuffer !== 'scroll') {
-      if (distance > 0) {
-        this.#endTimelineSeek();
-        this.#scrollBuffer = this.#activeBuffer;
-      }
-      return;
+      this.#endTimelineSeek();
+      this.#scrollBuffer = this.#activeBuffer;
+      return false;
     }
-    if (!this.#bufferedList || distance < 170 || this.#scrollBuffer === 'history') return;
-    this.#scrollBuffer = isLargeScrollStep(distance, this.#height()) ? 'history' : 'scroll';
+    if (!this.#bufferedList) return false;
+    const prior = this.#scrollBuffer;
+    this.#scrollBuffer = this.#nextListBuffer(prior, distance);
+    // A one-page reversal after a distant seek may already extend beyond the compact landing.
+    return prior === 'interactive' || this.#scrollBuffer === 'interactive';
+  }
+  #nextListBuffer(previous: ScrollBuffer, distance: number): ScrollBuffer {
+    if (distance < 170) return previous === 'interactive' ? 'history' : previous;
+    const height = this.#height();
+    if (distance >= 4 * height) return 'interactive';
+    if (previous === 'history' || previous === 'interactive') return 'history';
+    return isLargeScrollStep(distance, height) ? 'history' : 'scroll';
   }
   #listen(listen: boolean): void {
     const { host, scroll } = this.#options;

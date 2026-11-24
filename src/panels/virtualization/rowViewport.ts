@@ -239,7 +239,6 @@ export class RowViewport {
     const height = measuredHeight > 0 ? measuredHeight : 340;
     const total = this.#geometry.offset(count);
     const scrollTop = Math.max(0, Math.min(requestedTop, Math.max(0, total - measuredHeight)));
-    if (buffer !== 'history' && this.#range?.buffer === 'history') this.#range = undefined;
     const { start, end } = this.#rangeFor(scrollTop, height, buffer);
     const indices = new Set<number>();
     for (let index = start; index < end; index++) indices.add(index);
@@ -273,6 +272,11 @@ export class RowViewport {
   }
 
   #rangeFor(scrollTop: number, height: number, buffer: ScrollBuffer): BufferedRange {
+    if (buffer !== 'history' && this.#range?.buffer === 'history') {
+      if (buffer === 'interactive' && this.#coversViewport(this.#range, scrollTop, height))
+        return this.#listRange(scrollTop, height, 'history');
+      this.#range = undefined;
+    }
     if (buffer === 'timeline-seek') {
       this.#seekTop = scrollTop;
       return this.#seekRange(scrollTop, height);
@@ -365,6 +369,13 @@ export class RowViewport {
     };
   }
 
+  #coversViewport(range: BufferedRange, top: number, height: number): boolean {
+    return (
+      top >= this.#geometry.offset(range.start) &&
+      top + height <= this.#geometry.offset(range.end) + 1
+    );
+  }
+
   #keepVisited(
     next: BufferedRange,
     previous: BufferedRange,
@@ -373,11 +384,7 @@ export class RowViewport {
   ): BufferedRange {
     // A scrollbar jump starts a fresh window. During a continuous gesture retain
     // the rows already traversed, so reversing direction stays native.
-    if (
-      top < this.#geometry.offset(previous.start) ||
-      top + next.height > this.#geometry.offset(previous.end) + 1
-    )
-      return next;
+    if (!this.#coversViewport(previous, top, next.height)) return next;
     const capacity = Math.max(budget, next.end - next.start);
     const start = Math.max(Math.min(next.start, previous.start), next.end - capacity);
     const end = Math.min(Math.max(next.end, previous.end), start + capacity);

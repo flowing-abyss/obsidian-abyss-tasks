@@ -2411,6 +2411,29 @@ it('keeps taps and horizontal gestures cold, then covers the first vertical reve
   }
 });
 
+it('limits newly mounted offscreen rows on a distant list seek and keeps the landing clickable', async () => {
+  const h = harness(false, false, false, { scrollReservePx: 600 });
+  try {
+    h.surface.update(rows(2000), presentation);
+    h.frame();
+    h.mount.mockClear();
+    h.scrollTo(14400);
+    await Promise.resolve();
+    expect(h.surface.element('n.md:305')?.isConnected).toBe(true);
+    expect(h.mount.mock.calls.length).toBeLessThanOrEqual(36);
+    h.size(600, 960);
+    h.resize();
+    h.frame();
+    h.scrollTo(48000);
+    await Promise.resolve();
+    h.scrollTo(47040);
+    await Promise.resolve();
+    expect(h.surface.element('n.md:980')?.isConnected).toBe(true);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
 it('publishes clickable canonical Timeline rows before a large wheel handler returns', () => {
   const h = harness(false, false, false, { scrollReservePx: 'timeline' });
   const selected = vi.fn();
