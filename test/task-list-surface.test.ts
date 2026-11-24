@@ -4558,3 +4558,25 @@ it('reveals a retained row with its latest hidden snapshot before the recovery f
   expect(original?.textContent).toBe('Latest 1');
   h.surface.destroy();
 });
+
+it('leaves the first pointer press after a Timeline jump ahead of offscreen card mounts', () => {
+  vi.useFakeTimers();
+  const h = harness(false, false, false, { scrollReservePx: 'timeline' });
+  try {
+    h.surface.update(rows(2000), presentation);
+    h.scroll.dispatchEvent(new WheelEvent('wheel', { cancelable: true, deltaY: 14500 }));
+    h.frame();
+    vi.advanceTimersByTime(350);
+    h.mount.mockClear();
+    h.scroll.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true }),
+    );
+    vi.advanceTimersByTime(100);
+    expect(h.mount).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(400);
+    expect(h.mount).toHaveBeenCalled();
+  } finally {
+    h.surface.destroy();
+    vi.useRealTimers();
+  }
+});

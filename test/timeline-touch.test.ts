@@ -78,7 +78,9 @@ it('coalesces a vertical drag to a single canonical destination per paint and co
     expect(h.scroll.scrollTop).toBeGreaterThan(190);
     const before = h.scroll.scrollTop;
     h.paint(2000);
-    expect(h.scroll.scrollTop - before).toBeLessThanOrEqual(400);
+    // A busy renderer must not resume a two-second-old fling on its next paint.
+    expect(h.scroll.scrollTop - before).toBeLessThan(2);
+    expect(h.frames.size).toBe(0);
     expect(h.positions[h.positions.length - 1]).toBe(h.scroll.scrollTop);
     h.row.dispatchEvent(new Event('pointerdown', { bubbles: true }));
     expect(h.frames.size).toBe(0);
@@ -109,6 +111,51 @@ it('keeps horizontal, multitouch, uncancelable and unavailable gestures native t
     expect(h.touch('touchmove', 100, 180)).toBe(false);
     expect(h.frames.size).toBe(0);
     expect(h.positions).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('leaves taps, slight finger movement and horizontal travel free of layout reads', () => {
+  const h = surface();
+  try {
+    const nested = h.row.createDiv();
+    nested.style.overflowY = 'auto';
+    const height = vi.fn(() => 80);
+    Object.defineProperties(nested, {
+      scrollHeight: { get: height },
+      clientHeight: { get: height },
+    });
+    const target = nested.createSpan();
+    const editable = vi.fn(() => false);
+    Object.defineProperty(target, 'isContentEditable', { get: editable });
+    const styles = vi.spyOn(window, 'getComputedStyle');
+    h.touch('touchstart', 250, 0, { target });
+    expect(h.touch('touchmove', 248, 12, { target })).toBe(false);
+    expect(h.touch('touchend', 249, 30, { target })).toBe(false);
+    h.touch('touchstart', 250, 40, { target });
+    expect(h.touch('touchend', 248, 64, { target, x: 95 })).toBe(false);
+    expect(styles).not.toHaveBeenCalled();
+    expect(editable).not.toHaveBeenCalled();
+    expect(height).not.toHaveBeenCalled();
+    expect(h.canPublish).not.toHaveBeenCalled();
+    expect(h.frames.size).toBe(0);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('checks the original scroller on first vertical travel even for a detached touchend target', () => {
+  const h = surface();
+  try {
+    const nested = h.row.createDiv();
+    const target = nested.createSpan();
+    h.touch('touchstart', 250, 0, { target });
+    nested.style.overflowY = 'auto';
+    Object.defineProperties(nested, { scrollHeight: { value: 200 }, clientHeight: { value: 80 } });
+    target.remove();
+    expect(h.touch('touchend', 140, 30, { target })).toBe(false);
+    expect(h.frames.size).toBe(0);
   } finally {
     h.dispose();
   }

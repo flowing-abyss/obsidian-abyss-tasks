@@ -10,29 +10,15 @@ const MAX_FRAME_MS = 40;
 const RELEASE_WINDOW_MS = 120;
 const STOP_SPEED = 0.04;
 
-function keepsNativeGesture(target: HTMLElement, scroll: HTMLElement, owner: Window): boolean {
-  for (
-    let node: HTMLElement | null = target;
-    node !== null && node !== scroll;
-    node = node.parentElement
-  ) {
-    if (
-      node.matches(
-        '[data-timeline-part], input, select, textarea, [draggable="true"]:not(.abyss-task-card)',
-      ) ||
-      node.isContentEditable
-    )
-      return true;
-    const style = owner.getComputedStyle(node);
-    if (style.touchAction === 'none' || style.touchAction === 'pan-x') return true;
-    if (
-      ['auto', 'scroll'].includes(style.overflowY) &&
-      (node.scrollHeight > node.clientHeight ||
-        ['none', 'contain'].includes(style.overscrollBehaviorY))
-    )
-      return true;
-  }
-  return false;
+function keepsNativeTravel(node: HTMLElement, owner: Window): boolean {
+  if (node.isContentEditable) return true;
+  const style = owner.getComputedStyle(node);
+  if (style.touchAction === 'none' || style.touchAction === 'pan-x') return true;
+  return (
+    ['auto', 'scroll'].includes(style.overflowY) &&
+    (['none', 'contain'].includes(style.overscrollBehaviorY) ||
+      node.scrollHeight > node.clientHeight)
+  );
 }
 
 function singleContact(event: TouchEvent, ended = false): Touch | undefined {
@@ -49,18 +35,26 @@ function touchOrigin(
   event: TouchEvent,
   scroll: HTMLElement,
   owner: NonNullable<Document['defaultView']>,
-): { first: Touch; target: GlobalEventHandlers } | undefined {
+): { first: Touch; target: GlobalEventHandlers; path: HTMLElement[] } | undefined {
   const first = singleContact(event);
   const target = event.target;
-  const control = event.composedPath().find(isRealmHTMLElement);
-  if (
-    first === undefined ||
-    control === undefined ||
-    (!isRealmHTMLElement(target) && !(target instanceof owner.SVGElement)) ||
-    keepsNativeGesture(control, scroll, owner)
-  )
+  if (first === undefined || (!isRealmHTMLElement(target) && !(target instanceof owner.SVGElement)))
     return;
-  return { first, target };
+  const path: HTMLElement[] = [];
+  for (const node of event.composedPath()) {
+    if (node === scroll) break;
+    if (!isRealmHTMLElement(node)) continue;
+    if (
+      node.matches(
+        '[data-timeline-part], input, select, textarea, [draggable="true"]:not(.abyss-task-card)',
+      ) ||
+      node.contentEditable === 'true' ||
+      node.contentEditable === 'plaintext-only'
+    )
+      return;
+    path.push(node);
+  }
+  return { first, target, path };
 }
 
 function shouldCoast(speed: number, sinceMove: number, owner: Window): boolean {
@@ -108,10 +102,11 @@ class TimelineTravel {
     let delta = this.#pending;
     this.#pending = 0;
     if (this.#coastTime !== undefined) {
-      const elapsed = Math.min(MAX_FRAME_MS, Math.max(0, now - this.#coastTime));
+      const elapsed = Math.max(0, now - this.#coastTime);
       this.#coastTime = now;
       const nextSpeed = this.#speed * Math.exp(-elapsed / DECAY_MS);
-      delta += (this.#speed - nextSpeed) * DECAY_MS;
+      // Travel only the last paint interval. Momentum still decays over the full wall-clock gap.
+      delta += nextSpeed * Math.expm1(Math.min(elapsed, MAX_FRAME_MS) / DECAY_MS) * DECAY_MS;
       this.#speed = nextSpeed;
     }
     const before = this.scroll.scrollTop;
@@ -171,13 +166,13 @@ export function bindTimelineTouch(
     stop();
     const origin = touchOrigin(event, scroll, owner);
     if (origin === undefined) return;
-    const { first, target } = origin;
+    const { first, target, path } = origin;
     let lastY = first.clientY;
     let lastTime = event.timeStamp;
     let speed = 0;
     let vertical = false;
     const sample = (event: TouchEvent, touch: Touch | undefined): void => {
-      if (touch?.identifier !== first.identifier || !canPublish()) {
+      if (touch?.identifier !== first.identifier) {
         stop();
         return;
       }
@@ -185,11 +180,15 @@ export function bindTimelineTouch(
       if (!vertical) {
         const dx = Math.abs(first.clientX - touch.clientX);
         if (Math.max(Math.abs(dy), dx) < INTENT_PX) return;
-        if (Math.abs(dy) <= dx) {
+        if (Math.abs(dy) <= dx || path.some((node) => keepsNativeTravel(node, owner))) {
           stop();
           return;
         }
         vertical = true;
+      }
+      if (!canPublish()) {
+        stop();
+        return;
       }
       event.preventDefault();
       if (dy === 0) return;

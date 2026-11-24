@@ -894,6 +894,12 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#reconcilePending();
     if (stage === 'partial') this.#refillAfterSeek(50);
   }
+  #postponeSeekRefill(): void {
+    if (this.#seekReserveTimer === undefined) return;
+    this.#owner?.clearTimeout(this.#seekReserveTimer);
+    this.#seekReserveTimer = undefined;
+    this.#refillAfterSeek();
+  }
   #endTimelineSeek(): void {
     if (this.#seekReserveTimer !== undefined) this.#owner?.clearTimeout(this.#seekReserveTimer);
     this.#seekReserveTimer = undefined;
@@ -999,6 +1005,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       if (live()) this.#clearInput();
     };
     const pointer = (event: PointerEvent): void => {
+      this.#postponeSeekRefill();
       if (event.pointerType === 'touch') local();
       else if (event.button === 0 && event.isPrimary !== false) clear();
     };
