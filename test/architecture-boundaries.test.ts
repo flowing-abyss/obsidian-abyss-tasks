@@ -243,6 +243,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/task-list/TaskSearchRows.ts',
     'src/views/PanelView.ts',
   ],
+  searchHydrationLimits: [
+    'src/panels/task-list/TaskSearchRows.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+    'src/integrations/taskSearchApi.ts',
+  ],
   TaskReadProjectionApi: ['src/panels/center/TaskSearch.ts'],
   TaskSearchState: [
     'src/panels/center/TaskSearch.ts',
