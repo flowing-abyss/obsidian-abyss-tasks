@@ -1325,7 +1325,7 @@ export class ProjectsTimelineView<
     );
     row.rangeDescription.setText(
       editReason ??
-        `${timelineRangeInstructions(row.range)} Click to set a missing date or drag to draw a range.`,
+        `${timelineRangeInstructions(row.range)} Click an empty track to set End or drag to draw a range. Click left of a range to set Start or right to set End.`,
     );
     row.track.removeAttribute('aria-label');
     row.bar.removeAttribute('aria-label');

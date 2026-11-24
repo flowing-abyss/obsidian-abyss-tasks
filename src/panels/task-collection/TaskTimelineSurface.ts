@@ -24,7 +24,6 @@ import {
 import { planTaskTimelineEdit, taskTimelineDates } from '../../task-lists/taskTimelineModel';
 import type { TaskTimelineSettings } from '../../task-lists/taskTimelineSettings';
 import {
-  localDate,
   sameTaskNodeRef,
   type TaskNodeSnapshot,
   type TaskPatch,
@@ -213,9 +212,6 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       finishEditor: () => Promise.resolve(true),
       selectRange: (identity, focus) => {
         actions.select(this.#key(identity), focus);
-      },
-      clickTrack: (source, day) => {
-        this.#setDue(source, day);
       },
       clickRange: (identity) => {
         actions.inspect?.(this.#key(identity));
@@ -426,23 +422,13 @@ export class TaskTimelineSurface<T> implements TaskCollectionSurface<T> {
       this.#report(plan.reason);
       return false;
     }
-    return this.#commitPatch(source, plan.patch);
-  }
-  #commitPatch(source: TaskTimelineSource, patch: TaskPatch): Promise<boolean> {
     const accept = (): boolean => {
       const current = this.#capture(source.occurrenceId);
       return (
         current.kind === 'ready' && sameTaskNodeRef(source.task.target, current.source.task.target)
       );
     };
-    return accept() ? this.actions.commit(source.task, patch, accept) : Promise.resolve(false);
-  }
-  #setDue(source: TaskTimelineSource, day: string): void {
-    void this.#commitPatch(source, { due: { type: 'set', value: localDate(day) } }).catch(
-      (error: unknown) => {
-        this.#report(error);
-      },
-    );
+    return accept() ? this.actions.commit(source.task, plan.patch, accept) : Promise.resolve(false);
   }
   #report(failure: unknown): void {
     new Notice(typeof failure === 'string' ? failure : 'Could not update task dates.');

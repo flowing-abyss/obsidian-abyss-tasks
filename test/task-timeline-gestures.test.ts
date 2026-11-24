@@ -173,6 +173,27 @@ it('resizes Due through the visible shared end handle without moving Start', asy
     h.dispose();
   }
 });
+it.each([
+  [{ due: '2026-10-28' }, 130, 'start', '2026-10-26'],
+  [{ due: '2026-10-28' }, 244, 'due', '2026-10-30'],
+  [{ start: '2026-10-28' }, 130, 'start', '2026-10-26'],
+  [{ start: '2026-10-28' }, 244, 'due', '2026-10-30'],
+  [{ start: '2026-10-27', due: '2026-10-29' }, 130, 'start', '2026-10-26'],
+  [{ start: '2026-10-27', due: '2026-10-29' }, 244, 'due', '2026-10-30'],
+] as const)('updates the %s range at x=%i with only %s', async (planning, x, field, day) => {
+  const h = mount(planning as TaskPlanning);
+  try {
+    await start(h.track, x);
+    h.track.dispatchEvent(pointer('pointerup', x));
+    await flushMicrotasks();
+    expect(h.commit.mock.calls.map(([, patch]) => patch)).toEqual([
+      { [field]: { type: 'set', value: day } },
+    ]);
+  } finally {
+    h.dispose();
+  }
+});
+
 it('sets Due on a short track press and draws both dates in one patch on drag', async () => {
   const h = mount({});
   try {

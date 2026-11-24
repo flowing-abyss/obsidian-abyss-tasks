@@ -40,7 +40,6 @@ export interface TimelinePointerInteractionContext<Source extends TimelineRangeS
   readonly reportRangeFailure: (failure: unknown) => void;
   readonly previewRange?: (occurrenceId: string, range: ProjectTimelineRange | undefined) => void;
   readonly clickEndpoint?: (source: Source, endpoint: 'start' | 'end') => void;
-  readonly clickTrack?: (source: Source, day: string) => void;
   readonly clickRange?: (occurrenceId: string) => void;
   readonly root: HTMLElement;
   readonly scroll: HTMLElement;
@@ -155,8 +154,9 @@ function writtenDay(active: ActivePointerGesture, planned: ProjectTimelineRange)
   return rangeDay(planned, 'start') ?? rangeDay(planned, 'end') ?? active.lastDay;
 }
 
-/** A track press fills the missing endpoint, which its counterpart may clamp. */
+/** Dragging on an open range fills its missing endpoint and may clamp to the other date. */
 function trackWrittenDay(active: ActivePointerGesture, planned: ProjectTimelineRange): string {
+  if (!active.moved) return active.startDay;
   const { kind } = active.source.range;
   if (kind === 'open-end') return rangeDay(planned, 'end') ?? active.lastDay;
   if (kind === 'open-start') return rangeDay(planned, 'start') ?? active.lastDay;
@@ -199,13 +199,24 @@ function gestureLabel(active: ActivePointerGesture, planned: ProjectTimelineRang
     : writtenDay(active, planned);
 }
 
+function trackClickIntent(
+  range: ProjectTimelineRange,
+  day: string,
+): ProjectTimelineEditIntent | undefined {
+  if (range.kind === 'unscheduled') return { type: 'setEnd', day };
+  if (range.kind === 'malformed') return undefined;
+  const first = range.kind === 'open-start' ? range.endDay : range.startDay;
+  const last = range.kind === 'open-end' ? range.startDay : range.endDay;
+  if (day < first) return { type: 'setStart', day };
+  if (day > last) return { type: 'setEnd', day };
+  return undefined;
+}
+
 function trackIntent(active: ActivePointerGesture): ProjectTimelineEditIntent | undefined {
   const { range } = active.source;
-  if (range.kind === 'unscheduled') {
-    return active.moved
-      ? { type: 'draw', startDay: active.startDay, endDay: active.lastDay }
-      : { type: 'setStart', day: active.lastDay };
-  }
+  if (!active.moved) return trackClickIntent(range, active.startDay);
+  if (range.kind === 'unscheduled')
+    return { type: 'draw', startDay: active.startDay, endDay: active.lastDay };
   if (range.kind === 'open-end') return { type: 'setEnd', day: active.lastDay };
   if (range.kind === 'open-start') return { type: 'setStart', day: active.lastDay };
   return undefined;
@@ -593,12 +604,10 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
     if (active.moved) return false;
     if (this.activateEndpoint_abyssPrivate(active)) return true;
     const { part, occurrenceId } = active.target;
-    const trackPress = part === 'track' ? this.context_abyssPrivate.clickTrack : undefined;
     const rangePress = part === 'bar' ? this.context_abyssPrivate.clickRange : undefined;
-    if (trackPress === undefined && rangePress === undefined) return false;
+    if (rangePress === undefined) return false;
     this.cancelGesture_abyssPrivate(true);
-    if (trackPress !== undefined) trackPress(active.source, active.startDay);
-    else rangePress?.(occurrenceId);
+    rangePress(occurrenceId);
     return true;
   }
 
@@ -682,7 +691,12 @@ export class TimelinePointerInteraction<Source extends TimelineRangeSource> {
   private preview_abyssPrivate(active: ActivePointerGesture<Source>): void {
     if (!this.shouldPreview_abyssPrivate(active)) return;
     const intent = this.intent_abyssPrivate(active);
-    if (intent === undefined) return;
+    if (intent === undefined) {
+      if (active.target.bar?.hasClass('is-previewing') === true)
+        this.restorePendingPreview_abyssPrivate(active);
+      this.hideOverlays_abyssPrivate();
+      return;
+    }
     const { source } = active;
     const plan = this.context_abyssPrivate.plan(source, intent);
     if (plan.kind === 'rejected') {

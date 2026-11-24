@@ -776,20 +776,43 @@ describe('ProjectTimelinePointerInteraction', () => {
   it.each([
     [{ kind: 'open-end', startDay: '2026-09-02' }, 'setEnd'],
     [{ kind: 'open-start', endDay: '2026-09-09' }, 'setStart'],
-  ] as const)('keeps missing endpoint track clicks absolute for %s', async (range, type) => {
-    const mounted = mount(range);
-    mounted.track.dispatchEvent(pointerEvent('pointerdown', 55));
+    [{ kind: 'open-end', startDay: '2026-09-09' }, 'setStart'],
+    [{ kind: 'open-start', endDay: '2026-09-02' }, 'setEnd'],
+    [{ kind: 'closed', startDay: '2026-09-06', endDay: '2026-09-08' }, 'setStart'],
+    [{ kind: 'closed', startDay: '2026-09-02', endDay: '2026-09-04' }, 'setEnd'],
+  ] as const)(
+    'chooses the endpoint by the side of the clicked range for %s',
+    async (range, type) => {
+      const mounted = mount(range);
+      mounted.track.dispatchEvent(pointerEvent('pointerdown', 55));
+      await flushMicrotasks();
+      mounted.track.dispatchEvent(pointerEvent('pointerup', 55));
+      await flushMicrotasks();
+      expect(mounted.commitRangeEdit).toHaveBeenCalledExactlyOnceWith({
+        kind: 'pointer',
+        source: source(range),
+        intent: { type, day: '2026-09-05' },
+      });
+    },
+  );
+
+  it('restores a closed range when a track click turns into a drag', async () => {
+    const mounted = mount();
+    const originalWidth = mounted.bar.style.width;
+    mounted.track.dispatchEvent(pointerEvent('pointerdown', 75));
     await flushMicrotasks();
-    mounted.track.dispatchEvent(pointerEvent('pointerup', 55));
-    await flushMicrotasks();
-    expect(mounted.commitRangeEdit).toHaveBeenCalledExactlyOnceWith({
-      kind: 'pointer',
-      source: source(range),
-      intent: { type, day: '2026-09-05' },
-    });
+    expect(mounted.bar.style.width).not.toBe(originalWidth);
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 85));
+    expect(mounted.bar.style.width).toBe(originalWidth);
+    expect(mounted.bar.classList.contains('is-previewing')).toBe(false);
+    expect(mounted.root.querySelector<HTMLElement>('.abyss-project-timeline-tooltip')?.hidden).toBe(
+      true,
+    );
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 85));
+    expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
   });
 
-  it('normalizes a reverse draw and keeps a click as Start-only intent', async () => {
+  it('draws both dates on drag and sets only End on the first click', async () => {
     const mounted = mount({ kind: 'unscheduled' });
 
     mounted.track.dispatchEvent(pointerEvent('pointerdown', 85));
@@ -812,7 +835,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     expect(mounted.commitRangeEdit).toHaveBeenLastCalledWith({
       kind: 'pointer',
       source: source({ kind: 'unscheduled' }),
-      intent: { type: 'setStart', day: '2026-09-05' },
+      intent: { type: 'setEnd', day: '2026-09-05' },
     });
   });
 
@@ -951,12 +974,13 @@ describe('ProjectTimelinePointerInteraction', () => {
       cursorLeft: 'calc(50% - 1px)',
     },
   ] as const)(
-    'marks the written day when a track press would set $label',
+    'marks the clamped day when a track drag would set $label',
     async ({ range, clientX, cursorLeft }) => {
       const mounted = mount(range);
 
-      mounted.track.dispatchEvent(pointerEvent('pointerdown', clientX));
+      mounted.track.dispatchEvent(pointerEvent('pointerdown', 55));
       await flushMicrotasks();
+      mounted.track.dispatchEvent(pointerEvent('pointermove', clientX));
 
       expect(tooltipText(mounted.root)).toBe('2026-09-05');
       expect(
