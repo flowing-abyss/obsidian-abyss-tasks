@@ -1214,6 +1214,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (!this.#admitReconciliation(current)) return false;
     this.#readFocus();
     const nativeTop = target === undefined ? this.#top() : target.top;
+    const nativePane = this.#nativeScrollPane(target);
     const revealKey = target?.revealKey;
     // Only a row already intersecting before provisional measurement retains tall-row placement.
     const alignTall = !this.#intersects(revealKey);
@@ -1228,8 +1229,17 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (!this.#admitReconciliation(current)) return false;
     return (
       this.#canReuseHeights(work, target, result === 'retained') ||
-      this.#measureWindow(nativeTop, target, current, { alignTall, retainedAnchor })
+      this.#measureWindow(nativeTop, target, current, { alignTall, retainedAnchor, nativePane })
     );
+  }
+  #nativeScrollPane(target: TaskListScroll | undefined): PaneSize | undefined {
+    if (
+      this.#paneSize === undefined ||
+      target !== undefined ||
+      this.#scrollWindow.isCompressed(this.#viewport.totalHeight)
+    )
+      return;
+    return this.#paneSize.read();
   }
   #anchorKey(anchor: RowAnchor | undefined, fallbackTop: number): string | undefined {
     // A tall row's old offset can place its replacement estimate outside overscan.
@@ -1250,7 +1260,15 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     top: number,
     target: TaskListScroll | undefined,
     current: () => boolean,
-    { alignTall, retainedAnchor }: { alignTall: boolean; retainedAnchor: RowAnchor | undefined },
+    {
+      alignTall,
+      retainedAnchor,
+      nativePane,
+    }: {
+      alignTall: boolean;
+      retainedAnchor: RowAnchor | undefined;
+      nativePane: PaneSize | undefined;
+    },
   ): boolean {
     if (target?.revealKey !== undefined)
       return this.#measureReveal(top, { ...target, key: target.revealKey, current, alignTall });
@@ -1259,7 +1277,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     // Ordinary frames retain their fractional/key anchor policy and one measurement pass.
     if (measuredTop !== undefined) this.#renderWindow(false, measuredTop, undefined, current);
     if (!current()) return false;
-    const corrected = this.#correctedTop(measuredTop, target, top);
+    const corrected = this.#correctedTop(measuredTop, target, top, nativePane);
     if (corrected !== undefined) this.#writeTop(corrected, current);
     return current();
   }
@@ -1267,12 +1285,25 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     measuredTop: number | undefined,
     target: TaskListScroll | undefined,
     top: number,
+    nativePane: PaneSize | undefined,
   ): number | undefined {
     const requested = this.#scrollWindow.isCompressed(this.#viewport.totalHeight) ? top : undefined;
+    if (this.#keepsNativePosition(nativePane, measuredTop === top, requested)) return;
     const corrected = measuredTop ?? target?.top ?? requested;
     return target?.clampToExtent === true && corrected !== undefined && corrected >= 0
       ? Math.min(corrected, Math.max(0, this.#viewport.totalHeight - this.#height()))
       : corrected;
+  }
+  #keepsNativePosition(
+    nativePane: PaneSize | undefined,
+    sameTop: boolean,
+    requested: number | undefined,
+  ): boolean {
+    // No anchor correction is due. A newer thumb position belongs to its native scroll event.
+    if (!sameTop || nativePane === undefined || requested !== undefined || !this.#canBufferRange())
+      return false;
+    // A watched attribute may invalidate the pane without moving its content origin.
+    return this.#paneSize?.read() === nativePane || this.#origin() === nativePane.origin?.offset;
   }
   #measureReveal(top: number, reveal: RevealPlacement): boolean {
     const { key, current } = reveal;

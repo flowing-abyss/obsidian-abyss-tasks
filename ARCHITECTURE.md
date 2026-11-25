@@ -153,8 +153,10 @@ viewport. Timeline uses the same task cards and calendar tracks during scrolling
 Vertical wheel steps of half a screen or more mount the destination window in the input handler.
 When the scrollbar jumps at least four screens, Timeline also mounts a compact destination window
 before paint. After the gesture pauses, small batches prepare neighboring cards. Overlapping Timeline windows keep
-recently visited cards within the row budget so a reversal can reuse them. The task and project
-timelines paint the grid from the same date boundaries as the header.
+recently visited cards within the row budget so a reversal can reuse them. When compact Timeline
+cards finish measuring, a newer scrollbar move keeps its position if the visible anchor still maps
+to the same native coordinate. Explicit reveals and pinned editors retain their scroll corrections.
+The task and project timelines paint the grid from the same date boundaries as the header.
 Mobile task lists and task timelines estimate unseen row heights from settled cards and retain
 the estimate with the scroll position. The center panel remembers the 32 most recently closed
 task collection views. A saved position contains the row key, intra-row offset, adjacent keys

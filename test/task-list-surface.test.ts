@@ -2045,6 +2045,76 @@ it('retires a compact Timeline mount immediately when an ancestor hides the pane
   }
 });
 
+it.each([false, true])(
+  'preserves newer native Timeline input after row measurement (pane attribute changed: %s)',
+  (attributeChanged) => {
+    const h = observedTimelinePane();
+    try {
+      h.surface.update(rows(1000), presentation);
+      h.scrollTo(960);
+      h.frame();
+      h.frame();
+      expect(h.surface.element('n.md:25')?.isConnected).toBe(true);
+      expect(h.surface.element('n.md:75')).toBeUndefined();
+      h.heights.set('n.md:25', 96);
+      h.onMeasure(() => {
+        h.onMeasure(undefined);
+        // Native input can move the thumb before its scroll event reaches the renderer.
+        if (attributeChanged) h.host.setAttribute('aria-busy', 'true');
+        h.scroll.scrollTop = 3600;
+      });
+      h.surface.refreshMeasurements();
+      h.frame();
+      expect(h.scroll.scrollTop).toBe(3600);
+      h.scroll.dispatchEvent(new Event('scroll'));
+      h.frame();
+      expect(h.surface.element('n.md:75')?.isConnected).toBe(true);
+    } finally {
+      h.surface.destroy();
+    }
+  },
+);
+
+it('preserves the Timeline anchor when a measured row takes the extent below the native limit', () => {
+  const h = observedTimelinePane();
+  try {
+    h.surface.update(rows(20_834), presentation);
+    const middle = new LogicalScrollWindow().place(500_000, 20_834 * 48, 480);
+    h.scrollTo(middle.nativeTop);
+    h.frame();
+    const position = h.surface.captureScroll();
+    expect(position.top).toBeGreaterThan(h.scroll.scrollTop);
+    const below = Math.floor(position.top / 48) + 5;
+    const key = `n.md:${below}`;
+    expect(h.surface.element(key)?.isConnected).toBe(true);
+    h.heights.set(key, 12);
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(h.scroll.scrollTop).toBeCloseTo(position.top);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
+it('preserves the Timeline anchor when the pane origin changes during row measurement', () => {
+  const h = observedTimelinePane();
+  try {
+    h.surface.update(rows(1000), presentation);
+    h.scrollTo(960);
+    h.frame();
+    h.heights.set('n.md:25', 96);
+    h.onMeasure(() => {
+      h.onMeasure(undefined);
+      h.style('paddingTop', '24px');
+    });
+    h.surface.refreshMeasurements();
+    h.frame();
+    expect(h.scroll.scrollTop).toBe(984);
+  } finally {
+    h.surface.destroy();
+  }
+});
+
 it('reuses the observed axis height on vertical Timeline scroll until a resize', async () => {
   const h = observedTimelinePane();
   try {
