@@ -1121,6 +1121,21 @@ describe('pre-push ranges', () => {
 
 describe('release preparation and command execution', () => {
   it(
+    'builds against the published baseline before the version bump',
+    () => {
+      commit({ 'src/main.ts': 'changed\n' });
+      git('update-ref', 'refs/remotes/origin/master', git('rev-parse', 'HEAD'));
+      expect(plan({ args: ['--plan', '--prepare-release'] })).toMatchObject({
+        mode: 'full',
+        commands: [
+          ['run', 'verify'],
+          ['run', 'release:check'],
+        ],
+      });
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
+  it(
     'always prepares fresh artifacts for a metadata-only release',
     () => {
       commit(versionBump());

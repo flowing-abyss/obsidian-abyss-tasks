@@ -14,7 +14,7 @@
 // `--release-ready` additionally fails on unfilled template placeholders
 // (manifest.id/name/author/description, package.json's name, LICENSE's
 // copyright holder, styles.css's example selector) — off by default so a
-// clean, unmodified template still passes `pnpm verify`. `preversion` runs
+// clean, unmodified template still passes `pnpm verify`. The version hook runs
 // with the flag, since an actual release must not ship placeholder metadata.
 
 import { existsSync, readFileSync, statSync } from 'node:fs';

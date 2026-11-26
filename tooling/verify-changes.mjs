@@ -375,8 +375,8 @@ function pushedRange(ref, remote, head) {
   }
 }
 
-/** @param {Decision} decision @param {boolean} release @returns {string[][]} */
-function commandsFor(decision, release) {
+/** @param {Decision} decision @param {boolean} release @param {boolean} releaseReady @returns {string[][]} */
+function commandsFor(decision, release, releaseReady) {
   const commands =
     decision.mode === 'full'
       ? [['run', 'verify']]
@@ -389,7 +389,9 @@ function commandsFor(decision, release) {
     if (decision.mode === 'light') {
       commands.push(['run', 'build'], ['run', 'release:artifacts'], ['run', 'lint:css:artifact']);
     }
-    commands.push(['run', 'release:check', '--release-ready']);
+    commands.push(
+      releaseReady ? ['run', 'release:check', '--release-ready'] : ['run', 'release:check'],
+    );
   }
   return commands;
 }
@@ -416,12 +418,19 @@ function verifyFull(args, context) {
 
 function main() {
   const args = process.argv.slice(2).filter((arg) => arg !== '--');
-  if (args.some((arg) => !['--plan', '--pre-push', '--release', '--full'].includes(arg))) {
-    throw new Error('Supported verification options are --plan, --pre-push, --release and --full.');
+  if (
+    args.some(
+      (arg) => !['--plan', '--pre-push', '--prepare-release', '--release', '--full'].includes(arg),
+    )
+  ) {
+    throw new Error(
+      'Supported verification options are --plan, --pre-push, --prepare-release, --release and --full.',
+    );
   }
   const context = { cwd, git: executable('git'), pnpm: executable('pnpm') };
   if (args.includes('--full')) return verifyFull(args, context);
-  const release = args.includes('--release') || process.env['GITHUB_REF_TYPE'] === 'tag';
+  const releaseReady = args.includes('--release') || process.env['GITHUB_REF_TYPE'] === 'tag';
+  const release = releaseReady || args.includes('--prepare-release');
   const decision = args.includes('--pre-push') ? prePushDecision() : contextDecision(release);
   const selected = strongest([decision, inspect({ base: commit('HEAD') })]);
   const reused =
@@ -431,7 +440,9 @@ function main() {
     decision.branchesOnly === true &&
     selected.mode === 'full' &&
     canReuseVerification(context);
-  const commands = reused ? [['run', 'audit:dependencies']] : commandsFor(selected, release);
+  const commands = reused
+    ? [['run', 'audit:dependencies']]
+    : commandsFor(selected, release, releaseReady);
   if (args.includes('--plan')) {
     process.stdout.write(`${JSON.stringify({ ...selected, commands })}\n`);
     return;
