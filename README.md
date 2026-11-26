@@ -79,7 +79,8 @@ Other views cover completion, deadlines, project aging and dependencies.
 
 - [x] Optimize the mobile interface.
 - [x] Improve individual project views.
-- [ ] Add AI integration and voice input.
+- [x] Add a public API.
+- [x] Add AI integration and voice input.
 - [ ] Add hybrid search alongside fuzzy search.
 
 ## Contributing
