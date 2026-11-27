@@ -35,10 +35,10 @@ export class ListNavigationLabels {
     if (saved == null || !isListViewCustomized(saved, key)) {
       if (hasDot) dot.remove();
     } else if (!hasDot) {
-      const indicator = label.ownerDocument.createElement('span');
-      indicator.className = 'abyss-left-custom-dot';
-      indicator.setAttribute('role', 'img');
-      indicator.setAttribute('aria-label', 'Custom view applied');
+      const indicator = createSpan({
+        cls: 'abyss-left-custom-dot',
+        attr: { role: 'img', 'aria-label': 'Custom view applied' },
+      });
       label.after(indicator);
     }
   }

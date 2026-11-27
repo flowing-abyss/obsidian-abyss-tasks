@@ -1731,7 +1731,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #createStaging(): HTMLElement {
     const host = this.#options.host;
     return this.#options.stagedMounts === 'detached'
-      ? host.ownerDocument.createElement('div')
+      ? host.ownerDocument.adoptNode(createDiv())
       : host.createDiv();
   }
   #finishStaging(staging: HTMLElement, oldOrder: Element[]): void {
